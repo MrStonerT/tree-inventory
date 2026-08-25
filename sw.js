@@ -10,8 +10,10 @@
    fetched in the background for next time. Field use should never wait on a
    network round trip that may not complete.
 
-   IMPORTANT: bump CACHE_VERSION whenever the app HTML changes, otherwise browsers
-   will keep serving the previously cached build.
+   CACHE_VERSION is rewritten by deploy.sh to a hash of the app HTML, so the cache
+   invalidates exactly when the app changes and never on a no-op. The literal below
+   is only what a hand-copied deployment would use — if you publish by hand, bump it
+   yourself, or stale builds will keep being served.
    ========================================================================== */
 
 const CACHE_VERSION = 'v-94f9791d84';
