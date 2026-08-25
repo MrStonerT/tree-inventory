@@ -1,0 +1,4367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#276b40">
+<title>Arborist Assistant — Tree Plot Plan &amp; Inventory</title>
+
+<!-- Progressive web app wiring. All of this is optional: when the file is opened
+     directly by double-click these simply 404, which is harmless — the app still
+     runs, it just cannot use persistent storage. See the Project tab. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Arborist">
+<style>
+/* ============================================================================
+   ARBORIST ASSISTANT — STYLES
+   Offline single-file app. High-contrast palette for outdoor screen use.
+   ========================================================================== */
+
+:root{
+  --green:#276b40; --green-dark:#1c4f2f; --green-soft:#e2f0e5;
+  --line:#d2dad3; --line-strong:#b3c0b5;
+  --ink:#152119; --ink-soft:#5b6a5e;
+  --bg:#eef1ed; --panel:#fff;
+  --accent:#b7642c;             /* selection / handles */
+  --blue:#477091;               /* structures */
+  --good:#2f8a4e; --fair:#c9a227; --poor:#d4772b; --hazard:#c0392b; --unknown:#8a948c;
+  --radius:10px;
+  --tap:44px;                   /* minimum touch target */
+  --shadow:0 1px 2px rgba(21,33,25,.07), 0 3px 10px rgba(21,33,25,.05);
+}
+
+*{box-sizing:border-box}
+/* Any class that sets `display` (e.g. .empty-state{display:grid}) outranks the UA
+   stylesheet's [hidden] rule, so the element stays painted despite el.hidden = true.
+   This makes the attribute mean what it says, everywhere. */
+[hidden]{display:none !important}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-text-size-adjust:100%;
+}
+
+/* ---- App shell ---------------------------------------------------------- */
+.app{display:flex; flex-direction:column; height:100vh; height:100dvh; padding:10px; gap:10px; max-width:1800px; margin:0 auto}
+.masthead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+.masthead h1{margin:0; font-size:20px; letter-spacing:-.01em}
+.masthead .sub{color:var(--ink-soft); font-size:13px}
+
+/* ---- Toolbar ------------------------------------------------------------ */
+.toolbar{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+.toolgroup{display:flex; gap:4px; align-items:center; padding:3px; background:var(--panel);
+  border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow)}
+
+button,.filebtn{
+  font:inherit; color:var(--ink); background:var(--panel); border:1px solid transparent;
+  border-radius:7px; padding:0 11px; min-height:var(--tap); min-width:var(--tap);
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  cursor:pointer; white-space:nowrap; user-select:none;
+}
+.toolgroup button,.toolgroup .filebtn{min-height:38px}
+button:hover,.filebtn:hover{background:var(--green-soft)}
+button:focus-visible,.filebtn:focus-visible{outline:2px solid var(--green); outline-offset:1px}
+button[aria-pressed="true"]{background:var(--green); color:#fff}
+button.primary{background:var(--green); color:#fff; font-weight:600}
+button.primary:hover{background:var(--green-dark)}
+button.danger:hover{background:#fdecea; color:var(--hazard)}
+button:disabled{opacity:.4; cursor:not-allowed}
+button:disabled:hover{background:var(--panel)}
+.filebtn{border:1px solid transparent}
+.btn-sm{min-height:32px; min-width:32px; padding:0 9px; font-size:13px}
+
+/* ---- Layout ------------------------------------------------------------- */
+.layout{display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:10px; flex:1; min-height:0}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  box-shadow:var(--shadow); display:flex; flex-direction:column; min-height:0; overflow:hidden}
+.card-head{padding:9px 12px; border-bottom:1px solid var(--line); display:flex;
+  align-items:center; gap:10px; flex-wrap:wrap; background:#fbfcfb}
+.card-head b{font-size:14px}
+.grow{flex:1}
+
+/* ---- Workspace ---------------------------------------------------------- */
+#view{flex:1; min-height:0; position:relative; overflow:hidden; background:#dfe5df; touch-action:none; cursor:grab}
+#view.panning{cursor:grabbing}
+#view.placing{cursor:crosshair}
+#canvas{position:absolute; transform-origin:0 0; background:#fff; box-shadow:0 2px 14px rgba(0,0,0,.18)}
+#plan{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; user-select:none}
+#svg{position:absolute; inset:0; width:100%; height:100%; overflow:visible}
+
+.empty-state{position:absolute; inset:22px; display:grid; place-items:center; text-align:center;
+  color:#536057; border:2px dashed #9caf9f; border-radius:12px; background:#f8fbf8; padding:24px}
+.empty-state b{display:block; font-size:20px; color:var(--green); margin-bottom:8px}
+.empty-state .muted{font-size:13px}
+
+/* Canvas overlays */
+.zoombar{display:flex; align-items:center; gap:4px}
+.zoombar b{min-width:46px; text-align:center; font-variant-numeric:tabular-nums; font-size:13px}
+.hint{position:absolute; left:50%; transform:translateX(-50%); bottom:14px; z-index:5;
+  background:rgba(21,33,25,.9); color:#fff; padding:9px 15px; border-radius:20px;
+  font-size:13px; pointer-events:none; box-shadow:var(--shadow); max-width:90%; text-align:center}
+.scalebar{position:absolute; left:12px; bottom:12px; z-index:5; background:rgba(255,255,255,.94);
+  border:1px solid var(--line); border-radius:6px; padding:5px 9px; font-size:12px;
+  font-variant-numeric:tabular-nums; pointer-events:none; box-shadow:var(--shadow)}
+.scalebar .rule{height:6px; border:1.5px solid var(--ink); border-top:0; margin-top:3px}
+
+/* ---- SVG map elements --------------------------------------------------- */
+.canopy{fill:currentColor; fill-opacity:.17; stroke:currentColor; stroke-opacity:.5; pointer-events:none}
+.tree-marker{cursor:pointer}
+.tree-dot{stroke:#fff; stroke-width:2.5; fill:currentColor}
+.tree-marker.selected .tree-dot{stroke:var(--accent); stroke-width:4}
+.tree-label{font-size:11px; font-weight:700; fill:#fff; text-anchor:middle;
+  dominant-baseline:central; pointer-events:none; paint-order:stroke;
+  stroke:rgba(0,0,0,.35); stroke-width:2.5px}
+.tree-caption{font-size:10px; fill:var(--ink); text-anchor:middle; pointer-events:none;
+  paint-order:stroke; stroke:#fff; stroke-width:3px; font-weight:600}
+.cond-good{color:var(--good)} .cond-fair{color:var(--fair)} .cond-poor{color:var(--poor)}
+.cond-hazard{color:var(--hazard)} .cond-unknown{color:var(--unknown)}
+.tree-marker.removed{opacity:.45}
+.tree-marker.removed .tree-dot{stroke-dasharray:3 2}
+
+.structure{cursor:pointer}
+.structure rect{fill:var(--blue); stroke:var(--blue); stroke-width:1.5}
+.structure.selected rect{stroke:var(--accent); stroke-width:3}
+.structure text{font-size:11px; font-weight:600; pointer-events:none;
+  fill:#23394d; paint-order:stroke; stroke:#fff; stroke-width:3px}
+.handle{fill:#fff; stroke:var(--accent); stroke-width:2; cursor:nwse-resize}
+.draft{fill:var(--blue); fill-opacity:.13; stroke:var(--blue); stroke-width:1.5; stroke-dasharray:5 3}
+.measure-line{stroke:var(--accent); stroke-width:2; stroke-dasharray:5 3}
+.measure-cap{stroke:var(--accent); stroke-width:2}
+.measure-text{font-size:12px; font-weight:700; fill:var(--accent); text-anchor:middle;
+  paint-order:stroke; stroke:#fff; stroke-width:3.5px}
+
+/* ---- Sidebar ------------------------------------------------------------ */
+.side{overflow:auto; padding:0; flex:1; min-height:0; overscroll-behavior:contain}
+.tabs{display:flex; gap:2px; padding:6px 6px 0; border-bottom:1px solid var(--line); background:#fbfcfb;
+  position:sticky; top:0; z-index:3}
+.tabs button{border-radius:7px 7px 0 0; min-height:38px; font-size:13px; font-weight:600;
+  color:var(--ink-soft); border-bottom:2px solid transparent; padding:0 10px; min-width:0}
+.tabs button[aria-selected="true"]{background:var(--panel); color:var(--green); border-bottom-color:var(--green)}
+.tabpanel{padding:12px}
+.tabpanel[hidden]{display:none}
+
+.section{padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid var(--line)}
+.section:last-child{border-bottom:0; margin-bottom:0; padding-bottom:0}
+.section > h3{margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft)}
+
+label.field{display:block; margin-bottom:9px}
+label.field > span{display:block; font-size:12px; font-weight:600; margin-bottom:3px; color:var(--ink-soft)}
+input,select,textarea{width:100%; font:inherit; color:var(--ink); background:#fff;
+  border:1px solid var(--line-strong); border-radius:7px; padding:9px 10px; min-height:var(--tap)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--green); outline-offset:-1px; border-color:var(--green)}
+textarea{min-height:74px; resize:vertical}
+input[type=range]{padding:0; min-height:32px; border:0; background:none}
+input[type=checkbox]{width:20px; height:20px; min-height:0; accent-color:var(--green)}
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:9px}
+.grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:9px}
+.inline{display:flex; align-items:center; gap:8px; margin-bottom:9px}
+.inline input[type=checkbox]{flex:none}
+.row{display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+.muted{color:var(--ink-soft); font-size:12.5px}
+.empty-note{color:var(--ink-soft); font-size:13px; font-style:italic; padding:10px 0}
+
+/* Chip multi-select (defects, recommendations) */
+.chips{display:flex; flex-wrap:wrap; gap:5px}
+.chip{border:1px solid var(--line-strong); border-radius:16px; padding:6px 11px; font-size:12.5px;
+  min-height:34px; min-width:0; background:#fff; cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--green); color:#fff; border-color:var(--green)}
+
+/* Lists */
+.list{max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:8px}
+.list-item{display:flex; align-items:center; gap:9px; padding:9px 10px;
+  border-bottom:1px solid var(--line); cursor:pointer; min-height:var(--tap)}
+.list-item:last-child{border-bottom:0}
+.list-item:hover{background:#f4f7f4}
+.list-item.selected{background:var(--green-soft)}
+.list-item .dot{width:11px; height:11px; border-radius:50%; background:currentColor; flex:none}
+.list-item .lead{font-weight:600; flex:none; min-width:38px; font-variant-numeric:tabular-nums}
+.list-item .meta{color:var(--ink-soft); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+
+/* Photos */
+.photogrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px}
+.photo{position:relative; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  aspect-ratio:4/3; background:#f0f2f0; cursor:pointer}
+.photo img{width:100%; height:100%; object-fit:cover; display:block}
+.photo .cap{position:absolute; left:0; right:0; bottom:0; background:rgba(21,33,25,.78); color:#fff;
+  font-size:10.5px; padding:3px 5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.photo .rm{position:absolute; top:3px; right:3px; min-height:26px; min-width:26px; padding:0;
+  border-radius:50%; background:rgba(255,255,255,.92); font-size:14px; line-height:1}
+
+/* Observation / history entries */
+.entry{border-left:3px solid var(--green); background:#f6f9f6; padding:8px 10px;
+  margin-bottom:8px; border-radius:0 7px 7px 0}
+.entry .when{font-size:11.5px; color:var(--ink-soft); font-weight:600; margin-bottom:3px;
+  display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+.entry .body{font-size:13.5px; white-space:pre-wrap; word-break:break-word}
+.entry dl{display:grid; grid-template-columns:auto 1fr; gap:2px 10px; margin:5px 0 0; font-size:12.5px}
+.entry dt{color:var(--ink-soft)}  .entry dd{margin:0; font-variant-numeric:tabular-nums}
+.delta{font-weight:700; font-variant-numeric:tabular-nums}
+.delta.up{color:var(--good)} .delta.down{color:var(--poor)}
+
+.badge{display:inline-block; padding:2px 8px; border-radius:11px; font-size:11px; font-weight:700;
+  background:var(--green-soft); color:var(--green-dark)}
+.badge.warn{background:#fdf1e3; color:#9a5b18}
+.badge.bad{background:#fdecea; color:#a5281c}
+
+/* Summary stats */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); gap:8px}
+.stat{background:#f6f9f6; border:1px solid var(--line); border-radius:8px; padding:9px; text-align:center}
+.stat .n{font-size:21px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.15}
+.stat .k{font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em}
+
+/* ---- Status bar --------------------------------------------------------- */
+.statusbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 11px;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  font-size:12.5px; box-shadow:var(--shadow); min-height:38px}
+.statusbar .warn{color:#9a5b18; font-weight:600}
+.statusbar .err{color:var(--hazard); font-weight:600}
+
+/* ---- Modal -------------------------------------------------------------- */
+dialog{border:0; border-radius:12px; padding:0; max-width:min(560px,94vw); box-shadow:0 12px 44px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(21,33,25,.55)}
+.dlg-head{padding:14px 16px; border-bottom:1px solid var(--line); font-weight:700}
+.dlg-body{padding:16px; max-height:70vh; overflow:auto}
+.dlg-foot{padding:12px 16px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:8px}
+
+/* ---- Photo viewer / annotation ------------------------------------------- */
+#lightbox{max-width:min(820px,96vw)}
+/* The stage shrink-wraps the image so the SVG overlay lines up exactly with it,
+   whatever size the image ends up being. line-height:0 removes the inline gap. */
+#annotStage{position:relative; display:inline-block; line-height:0; margin:0 auto;
+  border-radius:8px; overflow:hidden; background:#111; max-width:100%}
+#annotStage.drawing{cursor:crosshair}
+#lightboxImg{display:block; max-width:100%; max-height:52vh; width:auto; height:auto}
+#annotLayer{position:absolute; inset:0; width:100%; height:100%; touch-action:none; cursor:crosshair}
+.annot-bar{display:flex; flex-direction:column; gap:6px; margin-top:10px;
+  padding:9px; border:1px solid var(--line); border-radius:8px; background:#fbfcfb}
+.annot-bar .row{margin:0}
+.swatch{width:34px; height:34px; min-width:34px; min-height:34px; padding:0; border-radius:50%;
+  border:2px solid var(--line-strong)}
+.swatch[aria-pressed="true"]{border-color:var(--ink); box-shadow:0 0 0 2px #fff inset}
+.photo .marked{position:absolute; top:3px; left:3px; background:var(--accent); color:#fff;
+  font-size:10px; font-weight:700; border-radius:9px; padding:1px 6px; line-height:1.5}
+#exifPanel dl{display:grid; grid-template-columns:auto 1fr; gap:3px 10px; margin:8px 0 0; font-size:12.5px}
+#exifPanel dt{color:var(--ink-soft)} #exifPanel dd{margin:0; font-variant-numeric:tabular-nums}
+#exifPanel .gps{background:#f6f9f6; border-left:3px solid var(--green); padding:7px 9px;
+  border-radius:0 6px 6px 0; margin-top:9px}
+
+/* ---- Responsive: phone/tablet field use --------------------------------- */
+@media (max-width:900px){
+  :root{--tap:48px}
+  /* Respect the notch and home indicator when installed to a phone home screen. */
+  .app{gap:7px; height:auto; min-height:100dvh;
+    padding:7px max(7px,env(safe-area-inset-right)) max(7px,env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left))}
+  .layout{grid-template-columns:1fr; height:auto}
+  #view{height:56vh}
+  .side{max-height:none; overflow:visible}
+  .masthead h1{font-size:17px}
+  .masthead .sub{display:none}
+  .grid3{grid-template-columns:1fr 1fr}
+  .list{max-height:none}
+}
+
+/* ---- Print: client-facing report ---------------------------------------- */
+@media print{
+  @page{margin:14mm}
+  body{background:#fff}
+  .toolbar,.side,.statusbar,.zoombar,.hint,.empty-state,.masthead .sub,.no-print{display:none!important}
+  .app{display:block; height:auto; padding:0; max-width:none}
+  .layout{display:block}
+  .card{border:0; box-shadow:none; overflow:visible; break-inside:avoid}
+  .card-head{background:none; border-bottom:1px solid #000}
+  #view{height:auto; min-height:0; overflow:visible; background:none; page-break-after:always}
+  #canvas{position:relative!important; transform:none!important; width:100%!important;
+    height:auto!important; box-shadow:none}
+  #print-report{display:block!important}
+}
+#print-report{display:none}
+#print-report h2{font-size:16px; margin:0 0 8px}
+#print-report table{width:100%; border-collapse:collapse; font-size:11px}
+#print-report th,#print-report td{border:1px solid #999; padding:4px 6px; text-align:left; vertical-align:top}
+#print-report th{background:#eee}
+#print-report tr{break-inside:avoid}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== Masthead ===================== -->
+  <header class="masthead">
+    <h1>Arborist Assistant</h1>
+    <span class="sub">Offline tree inventory over your plot plan survey. Nothing leaves this device.</span>
+  </header>
+
+  <!-- ===================== Toolbar ====================== -->
+  <div class="toolbar no-print">
+
+    <div class="toolgroup" role="group" aria-label="Tools">
+      <button id="toolSelect"  aria-pressed="true"  title="Select and move (V)">Select</button>
+      <button id="toolTree"    aria-pressed="false" title="Place a tree (T)">+ Tree</button>
+      <button id="toolBox"     aria-pressed="false" title="Draw a structure or area (B)">+ Structure</button>
+      <button id="toolScale"   aria-pressed="false" title="Calibrate the plan scale (S)">Set scale</button>
+      <button id="toolMeasure" aria-pressed="false" title="Measure a distance (M)">Measure</button>
+    </div>
+
+    <div class="toolgroup" role="group" aria-label="Edit">
+      <button id="btnDelete" class="danger" title="Delete selected (Del)">Delete</button>
+      <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="btnRedo" title="Redo (Ctrl+Y)">Redo</button>
+    </div>
+
+    <div class="toolgroup" role="group" aria-label="File">
+      <label class="filebtn" title="Import a survey image as the base layer">Import plan
+        <input id="filePlan" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
+      </label>
+      <label class="filebtn" title="Open a .zip package or .json project">Open
+        <input id="fileOpen" type="file" accept=".zip,.json,application/json,application/zip" hidden>
+      </label>
+      <button id="btnSaveZip" class="primary" title="Save the full package including photos">Save package</button>
+      <button id="btnExportCsv" title="Export the tree schedule as CSV">CSV</button>
+      <button id="btnPrint" title="Print or save a PDF report">Report</button>
+    </div>
+  </div>
+
+  <!-- ===================== Main layout ================== -->
+  <div class="layout">
+
+    <!-- ---------- Workspace ---------- -->
+    <main class="card">
+      <div class="card-head no-print">
+        <b>Plot plan</b>
+        <span class="row" style="gap:11px">
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerPlan" checked> Plan</label>
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerCanopy" checked> Canopy</label>
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerTrees" checked> Trees</label>
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerStructures" checked> Structures</label>
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerLabels" checked> Labels</label>
+        </span>
+        <span class="grow"></span>
+        <span class="zoombar">
+          <button id="btnZoomOut" class="btn-sm" aria-label="Zoom out">&minus;</button>
+          <b id="zoomLevel">100%</b>
+          <button id="btnZoomIn" class="btn-sm" aria-label="Zoom in">+</button>
+          <button id="btnFit" class="btn-sm">Fit</button>
+        </span>
+      </div>
+
+      <div id="view">
+        <div id="emptyState" class="empty-state">
+          <div>
+            <b>Start with your plot plan</b>
+            Import a PNG, JPG, WebP, or SVG of your survey using <strong>Import plan</strong>.
+            <br><span class="muted">PDF surveys need converting to an image first. You can also
+            open an existing <code>.zip</code> package with <strong>Open</strong>.</span>
+          </div>
+        </div>
+        <div id="canvas">
+          <img id="plan" alt="Plot plan survey">
+          <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+            <g id="gStructures"></g>
+            <g id="gCanopy"></g>
+            <g id="gTrees"></g>
+            <g id="gOverlay"></g>
+          </svg>
+        </div>
+        <div id="scaleBar" class="scalebar" hidden></div>
+        <div id="hint" class="hint" hidden></div>
+      </div>
+    </main>
+
+    <!-- ---------- Sidebar ---------- -->
+    <aside class="card no-print">
+      <div class="tabs" role="tablist">
+        <button id="tabSelected" role="tab" aria-selected="true"  aria-controls="panelSelected">Selected</button>
+        <button id="tabTrees"    role="tab" aria-selected="false" aria-controls="panelTrees">Trees</button>
+        <button id="tabVisits"   role="tab" aria-selected="false" aria-controls="panelVisits">Visits</button>
+        <button id="tabProject"  role="tab" aria-selected="false" aria-controls="panelProject">Project</button>
+      </div>
+
+      <div class="side">
+
+        <!-- ===== Selected ===== -->
+        <div id="panelSelected" class="tabpanel" role="tabpanel">
+          <p id="noSelection" class="empty-note">
+            Nothing selected. Pick a tree or structure on the plan, or use <b>+ Tree</b> to place one.
+          </p>
+
+          <!-- Tree editor -->
+          <div id="treeEditor" hidden>
+            <div class="section">
+              <h3>Identity</h3>
+              <div class="grid2">
+                <label class="field"><span>Tree ID</span><input id="fTreeId" autocomplete="off"></label>
+                <label class="field"><span>Status</span>
+                  <select id="fStatus">
+                    <option>Existing</option><option>Proposed</option><option>Removed</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field"><span>Species (common)</span>
+                <input id="fSpecies" list="speciesList" autocomplete="off" placeholder="e.g. Coast live oak">
+              </label>
+              <label class="field"><span>Botanical name</span>
+                <input id="fBotanical" autocomplete="off" placeholder="e.g. Quercus agrifolia">
+              </label>
+              <label class="inline"><input type="checkbox" id="fProtected">
+                <span>Protected / heritage tree (ordinance applies)</span></label>
+            </div>
+
+            <div class="section">
+              <h3>Assessment <span id="obsVisitBadge" class="badge">—</span></h3>
+              <p class="muted" style="margin:-4px 0 9px">
+                Measurements are recorded against the active visit, so repeat visits build history automatically.
+              </p>
+              <div class="grid3">
+                <label class="field"><span>DBH (in)</span>
+                  <input id="fDbh" type="number" step="0.1" min="0" inputmode="decimal"></label>
+                <label class="field"><span>Height (ft)</span>
+                  <input id="fHeight" type="number" step="1" min="0" inputmode="numeric"></label>
+                <label class="field"><span>Spread (ft)</span>
+                  <input id="fSpread" type="number" step="1" min="0" inputmode="numeric"></label>
+              </div>
+              <p class="muted" style="margin:-4px 0 9px">Spread draws the canopy circle to true scale.</p>
+              <div class="grid2">
+                <label class="field"><span>Condition</span><select id="fCondition"></select></label>
+                <label class="field"><span>Priority</span><select id="fPriority"></select></label>
+              </div>
+              <label class="field"><span>Observed defects</span></label>
+              <div id="fDefects" class="chips"></div>
+              <label class="field" style="margin-top:10px"><span>Recommended work</span></label>
+              <div id="fRecommendations" class="chips"></div>
+              <label class="field" style="margin-top:10px"><span>Assessment notes</span>
+                <textarea id="fObsNotes" placeholder="Condition of this tree at this visit"></textarea>
+              </label>
+            </div>
+
+            <div class="section">
+              <h3>Photos</h3>
+              <div class="row" style="margin-bottom:9px">
+                <label class="filebtn btn-sm" style="border-color:var(--line-strong)">Take photo
+                  <input id="filePhotoCamera" type="file" accept="image/*" capture="environment" multiple hidden>
+                </label>
+                <label class="filebtn btn-sm" style="border-color:var(--line-strong)">Add from library
+                  <input id="filePhotoLibrary" type="file" accept="image/*" multiple hidden>
+                </label>
+              </div>
+              <div id="photoGrid" class="photogrid"></div>
+              <p id="photoEmpty" class="empty-note">No photos yet for this tree.</p>
+              <p class="muted" style="margin:8px 0 0">Tap a photo to view it, add a caption,
+                or draw on it to show where to cut.</p>
+            </div>
+
+            <div class="section" id="treeLocationSection" hidden>
+              <h3>Location from photos</h3>
+              <p id="treeLocationText" class="muted"></p>
+              <div class="row">
+                <button id="btnCopyCoords" class="btn-sm">Copy coordinates</button>
+              </div>
+            </div>
+
+            <div class="section">
+              <h3>Observation history</h3>
+              <div id="obsHistory"></div>
+            </div>
+
+            <div class="section">
+              <h3>Notes log</h3>
+              <textarea id="fNewNote" placeholder="Add a dated note (append-only)"></textarea>
+              <div class="row" style="margin-top:7px">
+                <button id="btnAddNote" class="btn-sm">Add note</button>
+              </div>
+              <div id="noteHistory" style="margin-top:10px"></div>
+            </div>
+          </div>
+
+          <!-- Structure editor -->
+          <div id="structureEditor" hidden>
+            <div class="section">
+              <h3>Structure / area</h3>
+              <label class="field"><span>Label</span><input id="sLabel" autocomplete="off"></label>
+              <label class="field"><span>Type</span>
+                <select id="sKind">
+                  <option>Building</option><option>Driveway</option><option>Deck / patio</option>
+                  <option>Pool</option><option>Fence</option><option>Utility / easement</option>
+                  <option>Planting bed</option><option>Other</option>
+                </select>
+              </label>
+              <label class="field"><span>Notes</span><textarea id="sNotes"></textarea></label>
+              <label class="field"><span>Fill opacity</span>
+                <input id="sOpacity" type="range" min="0" max="80"></label>
+              <p id="sSize" class="muted"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Trees ===== -->
+        <div id="panelTrees" class="tabpanel" role="tabpanel" hidden>
+          <div class="section">
+            <label class="field"><span>Filter</span>
+              <input id="treeSearch" placeholder="ID, species, condition, or recommendation" autocomplete="off">
+            </label>
+            <div class="row" style="margin-bottom:9px">
+              <label class="field" style="flex:1; margin:0"><span>Sort by</span>
+                <select id="treeSort">
+                  <option value="id">Tree ID</option>
+                  <option value="priority">Priority (urgent first)</option>
+                  <option value="condition">Condition (worst first)</option>
+                  <option value="dbh">DBH (largest first)</option>
+                  <option value="species">Species</option>
+                </select>
+              </label>
+            </div>
+            <div id="treeList" class="list"></div>
+            <p id="treeCount" class="muted" style="margin-top:7px"></p>
+          </div>
+        </div>
+
+        <!-- ===== Visits ===== -->
+        <div id="panelVisits" class="tabpanel" role="tabpanel" hidden>
+          <div class="section">
+            <h3>Active visit</h3>
+            <p class="muted" style="margin:-4px 0 9px">
+              New measurements are filed under the active visit. Start a new visit each time you
+              walk the property so change over time is captured.
+            </p>
+            <label class="field"><span>Recording under</span><select id="activeVisit"></select></label>
+            <button id="btnNewVisit" class="primary btn-sm">Start new visit</button>
+          </div>
+          <div class="section">
+            <h3>Visit details</h3>
+            <div class="grid2">
+              <label class="field"><span>Date</span><input id="vDate" type="date"></label>
+              <label class="field"><span>Assessor</span><input id="vAssessor" autocomplete="off"></label>
+            </div>
+            <label class="field"><span>Conditions</span>
+              <input id="vWeather" autocomplete="off" placeholder="e.g. Clear, 78&deg;F, light wind"></label>
+            <label class="field"><span>Visit notes</span><textarea id="vNotes"></textarea></label>
+            <button id="btnDeleteVisit" class="danger btn-sm">Delete this visit</button>
+          </div>
+          <div class="section">
+            <h3>All visits</h3>
+            <div id="visitList" class="list"></div>
+          </div>
+        </div>
+
+        <!-- ===== Project ===== -->
+        <div id="panelProject" class="tabpanel" role="tabpanel" hidden>
+          <div class="section">
+            <h3>Property</h3>
+            <label class="field"><span>Project name</span><input id="pName" autocomplete="off"></label>
+            <label class="field"><span>Address</span><input id="pAddress" autocomplete="off"></label>
+            <div class="grid2">
+              <label class="field"><span>Client</span><input id="pClient" autocomplete="off"></label>
+              <label class="field"><span>Arborist</span><input id="pArborist" autocomplete="off"></label>
+            </div>
+            <label class="field"><span>Project notes</span><textarea id="pNotes"></textarea></label>
+          </div>
+
+          <div class="section">
+            <h3>Plan &amp; scale</h3>
+            <label class="field"><span>Plan opacity</span>
+              <input id="pOpacity" type="range" min="10" max="100"></label>
+            <p id="scaleStatus" class="muted"></p>
+            <div class="row">
+              <button id="btnScaleTool" class="btn-sm">Calibrate scale</button>
+              <button id="btnClearScale" class="btn-sm">Clear</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <h3>Inventory summary</h3>
+            <div id="summaryStats" class="stats"></div>
+            <div id="summaryBreakdown" style="margin-top:10px"></div>
+          </div>
+
+          <div class="section">
+            <h3>Storage</h3>
+            <p id="storageStatus" class="muted"></p>
+          </div>
+
+          <div class="section">
+            <h3>Offline &amp; install</h3>
+            <p id="pwaStatus" class="muted"></p>
+            <div class="row" style="margin-top:8px">
+              <button id="btnInstall" class="btn-sm primary" hidden>Install app</button>
+              <button id="btnPersist" class="btn-sm" hidden>Make storage permanent</button>
+              <button id="btnUpdateApp" class="btn-sm" hidden>Update available &mdash; reload</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===================== Status bar =================== -->
+  <div class="statusbar no-print">
+    <span id="statusMsg">Import a plot plan to begin.</span>
+    <span class="grow"></span>
+    <span id="saveState" class="muted">Not saved yet</span>
+  </div>
+
+  <!-- ===================== Print report ================= -->
+  <div id="print-report"></div>
+</div>
+
+<!-- Species suggestions; free text is always allowed. -->
+<datalist id="speciesList"></datalist>
+
+<!-- ===================== Dialogs ======================== -->
+<dialog id="scaleDialog">
+  <form method="dialog">
+    <div class="dlg-head">Set the plan scale</div>
+    <div class="dlg-body">
+      <p class="muted" style="margin-top:0">
+        You drew a line on the plan. Enter what that line measures in real life &mdash; use the
+        survey&rsquo;s scale bar, or a known dimension such as a property line or building face.
+      </p>
+      <label class="field"><span>Real-world length</span>
+        <input id="scaleFeet" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="e.g. 20">
+      </label>
+      <label class="field"><span>Units</span>
+        <select id="scaleUnits"><option value="ft">Feet</option><option value="m">Meters</option></select>
+      </label>
+    </div>
+    <div class="dlg-foot">
+      <button value="cancel">Cancel</button>
+      <button id="scaleOk" value="ok" class="primary">Set scale</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="lightbox">
+  <div class="dlg-head" id="lightboxTitle">Photo</div>
+  <div class="dlg-body">
+
+    <div id="annotStage">
+      <img id="lightboxImg" alt="">
+      <svg id="annotLayer" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="annot-bar">
+      <div class="row" id="annotToolRow" role="group" aria-label="Drawing tool"></div>
+      <div class="row" id="annotColorRow" role="group" aria-label="Marker colour"></div>
+      <div class="row">
+        <button id="annotUndo" class="btn-sm">Undo mark</button>
+        <button id="annotClear" class="btn-sm danger">Clear marks</button>
+        <span class="grow"></span>
+        <span id="annotCount" class="muted"></span>
+      </div>
+      <p id="annotHint" class="muted" style="margin:2px 0 0"></p>
+    </div>
+
+    <label class="field" style="margin-top:12px"><span>Caption</span>
+      <input id="lightboxCaption" autocomplete="off" placeholder="e.g. North face, cut at collar"></label>
+    <div id="exifPanel"></div>
+  </div>
+  <div class="dlg-foot">
+    <button id="lightboxClose" class="primary">Done</button>
+  </div>
+</dialog>
+<script>
+"use strict";
+/* ============================================================================
+   ARBORIST ASSISTANT
+   A single-file, offline tree inventory that lays trees over a plot plan survey.
+
+   Design notes that matter if you come back to this later:
+   - Geometry is stored NORMALIZED (0..1) against the plan image, so zoom, window
+     size, and a re-scanned plan never move your trees.
+   - `uid` is the permanent internal key. `treeId` is the human label and is freely
+     editable. Nothing internal ever references `treeId`.
+   - Measurements live in `observations[]`, one per visit. A tree's "current" values
+     are DERIVED from the latest observation, never stored twice. That is what makes
+     change-over-time free and keeps the two from drifting apart.
+   - Photo bytes never live in the state object. State holds metadata; the Blob lives
+     in PhotoStore (IndexedDB, or memory when IndexedDB is unavailable).
+
+   Sections below, in order:
+     1  Vocabulary        7  ZIP reader/writer
+     2  Utilities         8  Geometry & scale
+     3  Schema & migration 9 Rendering
+     4  State & history   10  Interaction
+     5  Storage           11  Panels & forms
+     6  Photos            12  Import / export / report
+                          13  Bootstrap
+   ========================================================================== */
+(function () {
+
+/* ============================================================================
+   1. VOCABULARY
+   Controlled lists. Legacy values are mapped in migration, never shown here.
+   ========================================================================== */
+
+const SCHEMA_VERSION = 3;
+
+const CONDITIONS = [
+  { value: 'Unassessed',   cls: 'cond-unknown', rank: 0 },
+  { value: 'Good',         cls: 'cond-good',    rank: 1 },
+  { value: 'Fair',         cls: 'cond-fair',    rank: 2 },
+  { value: 'Poor',         cls: 'cond-poor',    rank: 3 },
+  { value: 'Dead / hazard',cls: 'cond-hazard',  rank: 4 },
+];
+
+/* Conditions used by the v1/v2 prototypes, mapped onto the list above. */
+const LEGACY_CONDITIONS = {
+  'Concern': 'Poor',
+  'Hazard / urgent': 'Dead / hazard',
+  'Hazard': 'Dead / hazard',
+  'Dead': 'Dead / hazard',
+};
+
+const PRIORITIES = [
+  'Not set', 'Monitor', 'Routine', 'Within 12 months', 'High priority', 'Immediate',
+];
+
+const DEFECTS = [
+  'Deadwood', 'Codominant stems', 'Included bark', 'Cavity / decay', 'Root damage',
+  'Girdling roots', 'Lean', 'Cracks', 'Cankers', 'Conks / fungal fruiting',
+  'Pest infestation', 'Storm damage', 'Poor structure', 'Utility conflict',
+  'Girdling hardware', 'Trunk wound',
+];
+
+const RECOMMENDATIONS = [
+  'Monitor', 'Clean / deadwood prune', 'Structural prune', 'Crown raise', 'Crown reduce',
+  'Clearance prune', 'Cable / brace', 'Remove', 'Stump grind', 'Root collar excavation',
+  'Mulch', 'Irrigate', 'Soil treatment', 'Pest treatment', 'Protect during construction',
+];
+
+/* Suggestions only — the species field always accepts free text. */
+const SPECIES = [
+  ['Coast live oak', 'Quercus agrifolia'],
+  ['Valley oak', 'Quercus lobata'],
+  ['Blue oak', 'Quercus douglasii'],
+  ['Interior live oak', 'Quercus wislizeni'],
+  ['Black oak', 'Quercus kelloggii'],
+  ['Cork oak', 'Quercus suber'],
+  ['Red oak', 'Quercus rubra'],
+  ['White oak', 'Quercus alba'],
+  ['Coast redwood', 'Sequoia sempervirens'],
+  ['Monterey pine', 'Pinus radiata'],
+  ['Ponderosa pine', 'Pinus ponderosa'],
+  ['Douglas fir', 'Pseudotsuga menziesii'],
+  ['Incense cedar', 'Calocedrus decurrens'],
+  ['Deodar cedar', 'Cedrus deodara'],
+  ['California sycamore', 'Platanus racemosa'],
+  ['London plane', 'Platanus x acerifolia'],
+  ['California bay', 'Umbellularia californica'],
+  ['California buckeye', 'Aesculus californica'],
+  ['Bigleaf maple', 'Acer macrophyllum'],
+  ['Japanese maple', 'Acer palmatum'],
+  ['Red maple', 'Acer rubrum'],
+  ['Silver maple', 'Acer saccharinum'],
+  ['Sweetgum', 'Liquidambar styraciflua'],
+  ['Tulip tree', 'Liriodendron tulipifera'],
+  ['American elm', 'Ulmus americana'],
+  ['Chinese elm', 'Ulmus parvifolia'],
+  ['Northern catalpa', 'Catalpa speciosa'],
+  ['Honey locust', 'Gleditsia triacanthos'],
+  ['Black walnut', 'Juglans nigra'],
+  ['English walnut', 'Juglans regia'],
+  ['Coast live oak hybrid', 'Quercus x'],
+  ['Blue gum eucalyptus', 'Eucalyptus globulus'],
+  ['Silver dollar gum', 'Eucalyptus polyanthemos'],
+  ['Camphor', 'Cinnamomum camphora'],
+  ['Southern magnolia', 'Magnolia grandiflora'],
+  ['Crape myrtle', 'Lagerstroemia indica'],
+  ['Olive', 'Olea europaea'],
+  ['Coast banksia', 'Banksia integrifolia'],
+  ['Callery pear', 'Pyrus calleryana'],
+  ['Apple', 'Malus domestica'],
+  ['Cherry', 'Prunus avium'],
+  ['Plum', 'Prunus domestica'],
+  ['Peach', 'Prunus persica'],
+  ['Fig', 'Ficus carica'],
+  ['Citrus', 'Citrus spp.'],
+  ['Avocado', 'Persea americana'],
+  ['Birch', 'Betula pendula'],
+  ['Willow', 'Salix spp.'],
+  ['Cottonwood', 'Populus fremontii'],
+  ['Ash', 'Fraxinus spp.'],
+  ['Palm', 'Washingtonia spp.'],
+  ['Toyon', 'Heteromeles arbutifolia'],
+  ['Madrone', 'Arbutus menziesii'],
+  ['Strawberry tree', 'Arbutus unedo'],
+  ['Chinese pistache', 'Pistacia chinensis'],
+  ['Ginkgo', 'Ginkgo biloba'],
+  ['Jacaranda', 'Jacaranda mimosifolia'],
+  ['Purple leaf plum', 'Prunus cerasifera'],
+];
+
+const STRUCTURE_KINDS = [
+  'Building', 'Driveway', 'Deck / patio', 'Pool', 'Fence',
+  'Utility / easement', 'Planting bed', 'Other',
+];
+
+const M_PER_FT = 0.3048;
+
+/* ============================================================================
+   2. UTILITIES
+   ========================================================================== */
+
+const $  = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+/** Crypto-backed unique id; falls back for very old engines. */
+function uid() {
+  if (crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+const nowIso   = () => new Date().toISOString();
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** Escape for safe innerHTML interpolation. */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+/** Number or null — blank strings must not become 0, which would be a false reading. */
+function numOrNull(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.length === 10 ? iso + 'T12:00:00' : iso);
+  return Number.isNaN(d.getTime()) ? iso
+    : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso
+    : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric',
+                                    hour: 'numeric', minute: '2-digit' });
+}
+
+function fmtBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+function debounce(fn, ms) {
+  let t;
+  return function () {
+    const args = arguments;
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(null, args), ms);
+  };
+}
+
+function conditionMeta(value) {
+  return CONDITIONS.find(c => c.value === value) || CONDITIONS[0];
+}
+
+/** Trigger a browser download for a Blob. */
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/** Filesystem-safe slug for export filenames. */
+function slug(s) {
+  return String(s || 'project').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'project';
+}
+
+/* ============================================================================
+   3. SCHEMA & MIGRATION
+   ========================================================================== */
+
+function blankProject() {
+  const firstVisit = newVisit('Baseline survey');
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    project: {
+      name: 'Untitled property', address: '', client: '', arborist: '', notes: '',
+      createdAt: nowIso(), modifiedAt: nowIso(),
+    },
+    background: { file: '', width: 0, height: 0, opacity: 100 },
+    scale: { calibration: null, units: 'ft' },
+    view: { zoom: 1, panX: 20, panY: 20 },
+    layers: { plan: true, canopy: true, trees: true, structures: true, labels: true },
+    visits: [firstVisit],
+    activeVisitId: firstVisit.id,
+    trees: [],
+    structures: [],
+  };
+}
+
+function newVisit(label) {
+  return {
+    id: uid(),
+    date: todayIso(),
+    label: label || '',
+    assessor: '',
+    weather: '',
+    notes: '',
+    createdAt: nowIso(),
+  };
+}
+
+function newTree(x, y, treeId) {
+  return {
+    uid: uid(),
+    treeId: treeId,
+    x: x, y: y,
+    species: '', botanical: '',
+    status: 'Existing',
+    protected: false,
+    observations: [],
+    photos: [],
+    history: [],
+    events: [{ timestamp: nowIso(), type: 'tree_added', details: {} }],
+    createdAt: nowIso(), modifiedAt: nowIso(),
+  };
+}
+
+function newObservation(visitId, date) {
+  return {
+    id: uid(),
+    visitId: visitId,
+    date: date || todayIso(),
+    dbhIn: null, heightFt: null, spreadFt: null,
+    condition: 'Unassessed',
+    priority: 'Not set',
+    defects: [],
+    recommendations: [],
+    notes: '',
+    createdAt: nowIso(),
+  };
+}
+
+function newStructure(x, y, w, h) {
+  return {
+    uid: uid(),
+    label: 'Structure', kind: 'Building', notes: '',
+    x: x, y: y, width: w, height: h,
+    opacity: 0.14,
+    createdAt: nowIso(), modifiedAt: nowIso(),
+  };
+}
+
+/**
+ * Bring any prior save forward to the current schema.
+ * v1: flat prototype, pixel coords over a 1000x1250 assumed plan, `notes` string.
+ * v2: normalized coords, history[]/events[], photos[]/visits[] present but unused.
+ */
+function migrate(data) {
+  if (!data || typeof data !== 'object') throw new Error('Not a project file.');
+
+  if (data.schemaVersion === SCHEMA_VERSION) return normalizeV3(data);
+  if (data.schemaVersion === 2) return migrateV2toV3(data);
+  return migrateV1toV3(data);
+}
+
+function migrateV1toV3(d) {
+  const out = blankProject();
+  const visit = out.visits[0];
+  visit.label = 'Imported baseline';
+
+  out.project.name = d.projectName || out.project.name;
+  out.background.opacity = d.opacity == null ? 100 : d.opacity;
+  out.background.dataUrl = d.planData || '';
+
+  out.trees = (d.trees || []).map(t => {
+    const tree = newTree((t.x || 0) / 1000, (t.y || 0) / 1250, String(t.id || ''));
+    tree.species = t.species || '';
+    const obs = newObservation(visit.id, visit.date);
+    obs.dbhIn = numOrNull(t.dbh);
+    obs.condition = LEGACY_CONDITIONS[t.condition] || t.condition || 'Unassessed';
+    tree.observations = [obs];
+    if (t.notes) {
+      tree.history.push({
+        id: uid(), createdAt: nowIso(), text: String(t.notes),
+        category: 'Imported legacy comments',
+      });
+    }
+    return tree;
+  });
+
+  out.structures = (d.boxes || []).map(b => {
+    const s = newStructure((b.x || 0) / 1000, (b.y || 0) / 1250, (b.w || 0) / 1000, (b.h || 0) / 1250);
+    s.label = b.label || 'Structure';
+    s.notes = b.notes || '';
+    return s;
+  });
+
+  return renumberIfNeeded(out);
+}
+
+function migrateV2toV3(d) {
+  const out = blankProject();
+  const visit = out.visits[0];
+  visit.label = 'Imported baseline';
+
+  Object.assign(out.project, {
+    name: (d.project && d.project.name) || 'Untitled property',
+    createdAt: (d.project && d.project.createdAt) || nowIso(),
+  });
+  if (d.background) {
+    out.background.opacity = d.background.opacity == null ? 100 : d.background.opacity;
+    out.background.width  = d.background.width || 0;
+    out.background.height = d.background.height || 0;
+    out.background.dataUrl = d.background.dataUrl || '';
+  }
+  if (d.layers) Object.assign(out.layers, d.layers);
+  if (d.view) Object.assign(out.view, d.view);
+
+  out.trees = (d.trees || []).map(t => {
+    const tree = newTree(t.x || 0, t.y || 0, String(t.treeId || ''));
+    tree.uid = t.uid || tree.uid;
+    tree.species = t.species || '';
+    tree.createdAt = t.createdAt || tree.createdAt;
+    /* v2 kept a single flat measurement set; it becomes the baseline observation. */
+    const obs = newObservation(visit.id, visit.date);
+    obs.dbhIn = numOrNull(t.dbh);
+    obs.condition = LEGACY_CONDITIONS[t.condition] || t.condition || 'Unassessed';
+    obs.priority = PRIORITIES.indexOf(t.priority) >= 0 ? t.priority : 'Not set';
+    tree.observations = [obs];
+    tree.history = Array.isArray(t.history) ? t.history.slice() : [];
+    tree.events  = Array.isArray(t.events)  ? t.events.slice()  : tree.events;
+    return tree;
+  });
+
+  out.structures = (d.structures || []).map(s => {
+    const st = newStructure(s.x || 0, s.y || 0, s.width || 0, s.height || 0);
+    st.uid = s.uid || st.uid;
+    st.label = s.label || 'Structure';
+    st.notes = s.notes || '';
+    st.opacity = s.opacity == null ? 0.14 : s.opacity;
+    return st;
+  });
+
+  return renumberIfNeeded(out);
+}
+
+/** Fill in anything a hand-edited or partial v3 file might be missing. */
+function normalizeV3(d) {
+  const base = blankProject();
+  const out = Object.assign(base, d);
+  out.project    = Object.assign(base.project, d.project || {});
+  out.background = Object.assign({ file: '', width: 0, height: 0, opacity: 100 }, d.background || {});
+  out.scale      = Object.assign({ calibration: null, units: 'ft' }, d.scale || {});
+  out.view       = Object.assign({ zoom: 1, panX: 20, panY: 20 }, d.view || {});
+  out.layers     = Object.assign({ plan: true, canopy: true, trees: true, structures: true, labels: true }, d.layers || {});
+  out.visits     = Array.isArray(d.visits) && d.visits.length ? d.visits : [newVisit('Baseline survey')];
+  out.trees      = Array.isArray(d.trees) ? d.trees : [];
+  out.structures = Array.isArray(d.structures) ? d.structures : [];
+
+  out.trees.forEach(t => {
+    t.uid = t.uid || uid();
+    t.observations = Array.isArray(t.observations) ? t.observations : [];
+    t.photos  = Array.isArray(t.photos)  ? t.photos  : [];
+    /* Photos from packages written before annotations/EXIF existed. */
+    t.photos.forEach(p => {
+      if (!Array.isArray(p.annotations)) p.annotations = [];
+      if (p.exif === undefined) p.exif = null;
+    });
+    t.history = Array.isArray(t.history) ? t.history : [];
+    t.events  = Array.isArray(t.events)  ? t.events  : [];
+    if (t.status == null) t.status = 'Existing';
+  });
+  out.structures.forEach(s => { s.uid = s.uid || uid(); });
+
+  if (!out.visits.some(v => v.id === out.activeVisitId)) {
+    out.activeVisitId = out.visits[out.visits.length - 1].id;
+  }
+  return renumberIfNeeded(out);
+}
+
+/** Guarantee every tree carries a non-empty, unique treeId. */
+function renumberIfNeeded(p) {
+  const seen = new Set();
+  let next = 1;
+  p.trees.forEach(t => {
+    let id = String(t.treeId == null ? '' : t.treeId).trim();
+    if (!id || seen.has(id)) {
+      while (seen.has(String(next))) next++;
+      id = String(next++);
+    }
+    t.treeId = id;
+    seen.add(id);
+  });
+  return p;
+}
+/* ============================================================================
+   4. STATE & HISTORY
+   Undo/redo works on whole-state JSON snapshots. That is cheap here because
+   photo bytes are deliberately NOT part of state — only their metadata is.
+   ========================================================================== */
+
+let state      = blankProject();
+let selection  = null;      // { type:'tree'|'structure', uid:string }
+let tool       = 'select';
+let dirty      = false;
+let lastSavedAt = null;
+
+const undoStack = [];
+const redoStack = [];
+const UNDO_LIMIT = 60;
+
+const snapshot = () => JSON.stringify(state);
+
+/**
+ * Commit a change. Pass the snapshot taken BEFORE the mutation to make it undoable;
+ * pass null for transient changes (opacity dragging, layer toggles) that should not
+ * clutter the undo stack.
+ */
+function commit(before) {
+  if (before) {
+    undoStack.push(before);
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack.length = 0;
+  }
+  state.project.modifiedAt = nowIso();
+  dirty = true;
+  render();
+  scheduleAutosave();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshot());
+  state = JSON.parse(undoStack.pop());
+  reconcileSelection();
+  render();
+  scheduleAutosave();
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshot());
+  state = JSON.parse(redoStack.pop());
+  reconcileSelection();
+  render();
+  scheduleAutosave();
+}
+
+/** After undo/redo the selected object may no longer exist. */
+function reconcileSelection() {
+  if (!selection) return;
+  const pool = selection.type === 'tree' ? state.trees : state.structures;
+  if (!pool.some(o => o.uid === selection.uid)) selection = null;
+}
+
+/* -------- Lookups ---------------------------------------------------------- */
+
+const treeByUid      = u => state.trees.find(t => t.uid === u) || null;
+const structureByUid = u => state.structures.find(s => s.uid === u) || null;
+
+function selectedTree() {
+  return selection && selection.type === 'tree' ? treeByUid(selection.uid) : null;
+}
+function selectedStructure() {
+  return selection && selection.type === 'structure' ? structureByUid(selection.uid) : null;
+}
+function activeVisit() {
+  return state.visits.find(v => v.id === state.activeVisitId) || state.visits[0];
+}
+
+/** Observations sorted oldest → newest, by visit date then creation order. */
+function sortedObservations(tree) {
+  const order = new Map(state.visits.map((v, i) => [v.id, i]));
+  return tree.observations.slice().sort((a, b) => {
+    const d = String(a.date || '').localeCompare(String(b.date || ''));
+    if (d !== 0) return d;
+    return (order.get(a.visitId) ?? 0) - (order.get(b.visitId) ?? 0);
+  });
+}
+
+/** The tree's current state = its most recent observation. Derived, never stored. */
+function latestObservation(tree) {
+  const all = sortedObservations(tree);
+  return all.length ? all[all.length - 1] : null;
+}
+
+/** The observation being edited right now: the one for the active visit. */
+function observationForActiveVisit(tree, createIfMissing) {
+  const v = activeVisit();
+  if (!v) return null;
+  let obs = tree.observations.find(o => o.visitId === v.id);
+  if (!obs && createIfMissing) {
+    obs = newObservation(v.id, v.date);
+    /* Carry the last known values forward so a revisit EDITS the previous picture
+       rather than starting blank. The arrays must be copied, not shared — otherwise
+       toggling a defect this year would silently rewrite last year's record. */
+    const prev = latestObservation(tree);
+    if (prev) {
+      obs.dbhIn = prev.dbhIn;
+      obs.heightFt = prev.heightFt;
+      obs.spreadFt = prev.spreadFt;
+      obs.condition = prev.condition;
+      obs.priority = prev.priority;
+      obs.defects = (prev.defects || []).slice();
+      obs.recommendations = (prev.recommendations || []).slice();
+    }
+    tree.observations.push(obs);
+  }
+  return obs;
+}
+
+/** Canopy radius in feet, from the most recent measured spread. */
+function canopyRadiusFt(tree) {
+  const obs = latestObservation(tree);
+  return obs && obs.spreadFt ? obs.spreadFt / 2 : null;
+}
+
+/** Great-circle distance in metres. Fine at property scale. */
+function haversineM(a, b) {
+  const R = 6371000, rad = d => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2
+          + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+/**
+ * Where a tree actually is, averaged from the GPS of its photos.
+ *
+ * `spreadM` — how far apart the individual photo fixes are — is reported alongside,
+ * because it is the honest quality signal. Consumer GPS degrades badly under a closed
+ * canopy, which is precisely where these photos get taken, so a tight-looking average
+ * of scattered fixes should not be presented as precision it does not have.
+ */
+function treeLocation(tree) {
+  const fixes = tree.photos
+    .map(p => p.exif && p.exif.gps)
+    .filter(g => g && g.lat != null && g.lon != null);
+  if (!fixes.length) return null;
+
+  const lat = fixes.reduce((s, g) => s + g.lat, 0) / fixes.length;
+  const lon = fixes.reduce((s, g) => s + g.lon, 0) / fixes.length;
+
+  let spreadM = 0;
+  for (let i = 0; i < fixes.length; i++) {
+    for (let j = i + 1; j < fixes.length; j++) {
+      spreadM = Math.max(spreadM, haversineM(fixes[i], fixes[j]));
+    }
+  }
+  const reported = fixes.map(g => g.accuracyM).filter(a => a != null);
+
+  return {
+    lat: lat, lon: lon,
+    samples: fixes.length,
+    accuracyM: reported.length ? Math.max.apply(null, reported) : null,
+    spreadM: Math.round(spreadM * 10) / 10,
+  };
+}
+
+/* ============================================================================
+   5. STORAGE
+   IndexedDB when we have a real origin; an in-memory Map otherwise. Chrome blocks
+   IndexedDB on file:// URLs, which is exactly how this app gets opened by
+   double-click — so the fallback is the normal case on desktop, not an edge case,
+   and the UI says so plainly rather than losing photos quietly.
+   ========================================================================== */
+
+const Store = {
+  db: null,
+  mode: 'memory',                 // 'idb' | 'memory'
+  mem: new Map(),                 // key -> Blob
+  reason: '',
+
+  async init() {
+    try {
+      if (typeof indexedDB === 'undefined') throw new Error('IndexedDB unavailable');
+      this.db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('arborist-assistant', 1);
+        const timer = setTimeout(() => reject(new Error('IndexedDB timed out')), 4000);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('blobs')) db.createObjectStore('blobs');
+          if (!db.objectStoreNames.contains('meta'))  db.createObjectStore('meta');
+        };
+        req.onsuccess = () => { clearTimeout(timer); resolve(req.result); };
+        req.onerror   = () => { clearTimeout(timer); reject(req.error || new Error('IndexedDB blocked')); };
+        req.onblocked = () => { clearTimeout(timer); reject(new Error('IndexedDB blocked')); };
+      });
+      this.mode = 'idb';
+    } catch (err) {
+      this.mode = 'memory';
+      this.reason = (err && err.message) || 'unavailable';
+    }
+    return this.mode;
+  },
+
+  _tx(storeName, mode) {
+    return this.db.transaction(storeName, mode).objectStore(storeName);
+  },
+
+  _req(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror   = () => reject(request.error);
+    });
+  },
+
+  async put(key, blob) {
+    if (this.mode === 'idb') { await this._req(this._tx('blobs', 'readwrite').put(blob, key)); }
+    else this.mem.set(key, blob);
+  },
+
+  async get(key) {
+    if (this.mode === 'idb') return this._req(this._tx('blobs', 'readonly').get(key));
+    return this.mem.get(key) || null;
+  },
+
+  async del(key) {
+    if (this.mode === 'idb') { await this._req(this._tx('blobs', 'readwrite').delete(key)); }
+    else this.mem.delete(key);
+  },
+
+  async clear() {
+    if (this.mode === 'idb') { await this._req(this._tx('blobs', 'readwrite').clear()); }
+    this.mem.clear();
+    Photos.revokeAll();
+  },
+
+  async setMeta(key, value) {
+    if (this.mode === 'idb') { await this._req(this._tx('meta', 'readwrite').put(value, key)); return; }
+    try { localStorage.setItem('aa-' + key, JSON.stringify(value)); } catch (e) { /* quota or blocked */ }
+  },
+
+  async getMeta(key) {
+    if (this.mode === 'idb') return this._req(this._tx('meta', 'readonly').get(key));
+    try {
+      const raw = localStorage.getItem('aa-' + key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  },
+};
+
+/* -------- Recovery autosave ------------------------------------------------ */
+
+const scheduleAutosave = debounce(async () => {
+  try {
+    await Store.setMeta('recovery', { savedAt: nowIso(), state: JSON.parse(snapshot()) });
+  } catch (e) { /* never let autosave failure break the app */ }
+}, 1200);
+
+/* ============================================================================
+   6. PHOTOS
+   Field photos arrive at 4–12MP. Stored raw, a property's worth would be hundreds
+   of megabytes, so every photo is downscaled on the way in. `imageOrientation:
+   'from-image'` matters here — without it, phone photos land sideways.
+   ========================================================================== */
+
+const PHOTO_MAX_EDGE = 1600;
+const PHOTO_QUALITY  = 0.82;
+const THUMB_MAX_EDGE = 320;
+const THUMB_QUALITY  = 0.7;
+
+const Photos = {
+  urls: new Map(),   // storage key -> object URL
+
+  /** Stable storage keys. Thumbs live beside their photo. */
+  key(photoId)      { return 'photo:' + photoId; },
+  thumbKey(photoId) { return 'thumb:' + photoId; },
+
+  /**
+   * Downscale to a JPEG blob bounded by maxEdge.
+   * Returns { blob, width, height }.
+   */
+  async resize(source, maxEdge, quality) {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(source, { imageOrientation: 'from-image' });
+    } catch (e) {
+      bitmap = await createImageBitmap(source);   // older engines ignore the option
+    }
+
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+
+    let blob;
+    if (typeof OffscreenCanvas !== 'undefined') {
+      const canvas = new OffscreenCanvas(w, h);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: quality });
+    } else {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+      blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    }
+    bitmap.close && bitmap.close();
+    return { blob: blob, width: w, height: h };
+  },
+
+  /** Ingest picked/captured files onto a tree. Returns the number added. */
+  async add(tree, fileList) {
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return 0;
+
+    let added = 0;
+    for (const file of files) {
+      try {
+        /* Metadata FIRST. Resizing goes through a canvas, and canvas re-encoding
+           strips EXIF — read it now or lose the GPS permanently. */
+        const exif = await EXIF.fromFile(file);
+
+        const full  = await this.resize(file, PHOTO_MAX_EDGE, PHOTO_QUALITY);
+        const thumb = await this.resize(full.blob, THUMB_MAX_EDGE, THUMB_QUALITY);
+        const id = uid();
+
+        await Store.put(this.key(id), full.blob);
+        await Store.put(this.thumbKey(id), thumb.blob);
+
+        tree.photos.push({
+          id: id,
+          file: 'photos/' + tree.uid + '/' + id + '.jpg',
+          caption: '',
+          /* The camera's own timestamp beats the file's mtime, which changes on copy. */
+          takenAt: (exif && exif.takenAt)
+            || (file.lastModified ? new Date(file.lastModified).toISOString() : nowIso()),
+          addedAt: nowIso(),
+          visitId: state.activeVisitId,
+          w: full.width, h: full.height,
+          bytes: full.blob.size,
+          exif: exif || null,
+          annotations: [],
+        });
+        added++;
+      } catch (err) {
+        console.error('Photo import failed for', file.name, err);
+        const heic = /\.(heic|heif)$/i.test(file.name) || /hei[cf]/i.test(file.type || '');
+        setStatus(heic
+          ? 'Could not read "' + file.name + '" — this browser cannot decode HEIC. '
+            + 'Set your iPhone camera to "Most Compatible" (Settings → Camera → Formats) '
+            + 'so it saves JPEG instead.'
+          : 'Could not read photo "' + file.name + '".', 'err');
+      }
+    }
+    if (added) {
+      tree.events.push({ timestamp: nowIso(), type: 'photos_added', details: { count: added } });
+      tree.modifiedAt = nowIso();
+    }
+    return added;
+  },
+
+  /**
+   * Detach a photo from a tree.
+   *
+   * The blob is deliberately LEFT in storage. Undo restores state from a JSON
+   * snapshot and blobs are not part of that snapshot, so deleting the bytes here
+   * would let undo resurrect a photo record pointing at nothing. Orphans cost a
+   * little session memory and disappear at save time, because the package is built
+   * by walking the trees that still exist.
+   */
+  remove(tree, photoId) {
+    const i = tree.photos.findIndex(p => p.id === photoId);
+    if (i < 0) return;
+    tree.photos.splice(i, 1);
+    tree.modifiedAt = nowIso();
+  },
+
+  /** Object URL for a stored blob, cached so repeated renders do not leak. */
+  async url(key) {
+    if (this.urls.has(key)) return this.urls.get(key);
+    const blob = await Store.get(key);
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    this.urls.set(key, url);
+    return url;
+  },
+
+  revoke(key) {
+    const url = this.urls.get(key);
+    if (url) { URL.revokeObjectURL(url); this.urls.delete(key); }
+  },
+
+  revokeAll() {
+    this.urls.forEach(url => URL.revokeObjectURL(url));
+    this.urls.clear();
+  },
+
+  /** Total stored photo bytes, for the storage readout. */
+  totalBytes() {
+    return state.trees.reduce((sum, t) =>
+      sum + t.photos.reduce((s, p) => s + (p.bytes || 0), 0), 0);
+  },
+
+  count() {
+    return state.trees.reduce((n, t) => n + t.photos.length, 0);
+  },
+};
+/* ============================================================================
+   6b. PHOTO METADATA (EXIF)
+
+   A minimal JPEG/EXIF reader — enough to recover where and when a photo was taken,
+   with no library.
+
+   This MUST run against the original camera file. Downscaling goes through a canvas,
+   and canvas re-encoding discards every metadata block, so by the time we have the
+   resized JPEG the GPS is already gone. Photos.add therefore parses first, resizes
+   second.
+
+   Only the head of the file is read (EXIF sits immediately after the SOI marker), so
+   a 12MP photo does not have to be pulled into memory to find out where it was taken.
+
+   Structure being walked:
+     SOI (FFD8) → APP1 (FFE1) → "Exif\0\0" → TIFF header → IFD0
+                                                   ├─ 0x8769 → Exif sub-IFD
+                                                   └─ 0x8825 → GPS IFD
+   ========================================================================== */
+
+const EXIF = (function () {
+
+  const HEAD_BYTES = 256 * 1024;      // APP1 is near the start; 256KB is ample
+
+  /* Bytes per component, indexed by TIFF field type. */
+  const TYPE_SIZE = { 1:1, 2:1, 3:2, 4:4, 5:8, 6:1, 7:1, 8:2, 9:4, 10:8, 11:4, 12:8 };
+
+  const TAG = {
+    // IFD0
+    MAKE: 0x010F, MODEL: 0x0110, ORIENTATION: 0x0112, DATETIME: 0x0132,
+    EXIF_IFD: 0x8769, GPS_IFD: 0x8825,
+    // Exif sub-IFD
+    EXPOSURE_TIME: 0x829A, F_NUMBER: 0x829D, ISO: 0x8827,
+    DATETIME_ORIGINAL: 0x9003, OFFSET_TIME_ORIGINAL: 0x9011,
+    FOCAL_LENGTH: 0x920A, PIXEL_X: 0xA002, PIXEL_Y: 0xA003,
+    // GPS IFD
+    GPS_LAT_REF: 0x0001, GPS_LAT: 0x0002, GPS_LON_REF: 0x0003, GPS_LON: 0x0004,
+    GPS_ALT_REF: 0x0005, GPS_ALT: 0x0006, GPS_TIMESTAMP: 0x0007, GPS_DOP: 0x000B,
+    GPS_IMG_DIR_REF: 0x0010, GPS_IMG_DIR: 0x0011, GPS_DATESTAMP: 0x001D,
+    GPS_H_ERROR: 0x001F,
+  };
+
+  /** Read one IFD into a { tag: value } map. Returns null if it looks malformed. */
+  function readIFD(view, tiffStart, dirStart, le) {
+    if (dirStart + 2 > view.byteLength) return null;
+    const count = view.getUint16(dirStart, le);
+    /* A plausible IFD; anything wilder means we mis-parsed and should bail. */
+    if (count > 512) return null;
+
+    const out = {};
+    for (let i = 0; i < count; i++) {
+      const entry = dirStart + 2 + i * 12;
+      if (entry + 12 > view.byteLength) break;
+
+      const tag  = view.getUint16(entry, le);
+      const type = view.getUint16(entry + 2, le);
+      const num  = view.getUint32(entry + 4, le);
+      const size = TYPE_SIZE[type];
+      if (!size) continue;
+
+      const total = size * num;
+      /* Values of 4 bytes or fewer are stored inline in the entry itself. */
+      const at = total <= 4 ? entry + 8 : tiffStart + view.getUint32(entry + 8, le);
+      if (at < 0 || at + total > view.byteLength) continue;
+
+      out[tag] = readValue(view, at, type, num, le);
+    }
+    return out;
+  }
+
+  function readValue(view, at, type, num, le) {
+    switch (type) {
+      case 2: {                                   // ASCII
+        let s = '';
+        for (let i = 0; i < num; i++) {
+          const c = view.getUint8(at + i);
+          if (c === 0) break;
+          s += String.fromCharCode(c);
+        }
+        return s.trim();
+      }
+      case 1: case 7:
+        return num === 1 ? view.getUint8(at)
+          : Array.from({ length: num }, (_, i) => view.getUint8(at + i));
+      case 3:
+        return num === 1 ? view.getUint16(at, le)
+          : Array.from({ length: num }, (_, i) => view.getUint16(at + i * 2, le));
+      case 4:
+        return num === 1 ? view.getUint32(at, le)
+          : Array.from({ length: num }, (_, i) => view.getUint32(at + i * 4, le));
+      case 9:
+        return num === 1 ? view.getInt32(at, le)
+          : Array.from({ length: num }, (_, i) => view.getInt32(at + i * 4, le));
+      case 5: case 10: {                          // RATIONAL / SRATIONAL
+        const one = i => {
+          const off = at + i * 8;
+          const n = type === 5 ? view.getUint32(off, le) : view.getInt32(off, le);
+          const d = type === 5 ? view.getUint32(off + 4, le) : view.getInt32(off + 4, le);
+          return d === 0 ? 0 : n / d;
+        };
+        return num === 1 ? one(0) : Array.from({ length: num }, (_, i) => one(i));
+      }
+      default:
+        return null;
+    }
+  }
+
+  /** Degrees/minutes/seconds triple + hemisphere → signed decimal degrees. */
+  function toDecimal(dms, ref) {
+    if (!Array.isArray(dms) || dms.length < 3) return null;
+    const value = dms[0] + dms[1] / 60 + dms[2] / 3600;
+    if (!Number.isFinite(value)) return null;
+    return (ref === 'S' || ref === 'W') ? -value : value;
+  }
+
+  /** EXIF dates look like "2026:08:25 14:32:10" — not parseable as-is. */
+  function toIso(exifDate, offset) {
+    if (!exifDate || typeof exifDate !== 'string') return null;
+    const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(exifDate);
+    if (!m) return null;
+    const local = m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
+    /* OffsetTimeOriginal ("+01:00") makes the timestamp unambiguous when present. */
+    if (offset && /^[+-]\d{2}:\d{2}$/.test(offset)) {
+      const d = new Date(local + offset);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+    const d = new Date(local);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  /**
+   * Parse EXIF from the head of a JPEG.
+   * @param {ArrayBuffer} buffer
+   * @returns {object|null} normalized metadata, or null when there is none.
+   */
+  function parseBuffer(buffer) {
+    try {
+      const view = new DataView(buffer);
+      if (view.byteLength < 4 || view.getUint16(0, false) !== 0xFFD8) return null;  // not a JPEG
+
+      /* Walk the marker chain looking for APP1/Exif. */
+      let offset = 2, tiffStart = -1;
+      while (offset + 4 <= view.byteLength) {
+        if (view.getUint8(offset) !== 0xFF) break;
+        const marker = view.getUint8(offset + 1);
+        if (marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+          offset += 2; continue;                       // standalone markers, no length
+        }
+        if (marker === 0xDA) break;                    // start of scan: no metadata past here
+        const length = view.getUint16(offset + 2, false);
+        if (length < 2) break;
+
+        if (marker === 0xE1 && offset + 10 <= view.byteLength) {
+          let sig = '';
+          for (let i = 0; i < 4; i++) sig += String.fromCharCode(view.getUint8(offset + 4 + i));
+          if (sig === 'Exif') { tiffStart = offset + 10; break; }
+        }
+        offset += 2 + length;
+      }
+      if (tiffStart < 0 || tiffStart + 8 > view.byteLength) return null;
+
+      /* TIFF header: byte order, magic 42, offset to IFD0. */
+      const order = view.getUint16(tiffStart, false);
+      if (order !== 0x4949 && order !== 0x4D4D) return null;
+      const le = order === 0x4949;
+      if (view.getUint16(tiffStart + 2, le) !== 42) return null;
+
+      const ifd0 = readIFD(view, tiffStart, tiffStart + view.getUint32(tiffStart + 4, le), le);
+      if (!ifd0) return null;
+
+      const sub = ifd0[TAG.EXIF_IFD]
+        ? readIFD(view, tiffStart, tiffStart + ifd0[TAG.EXIF_IFD], le) || {} : {};
+      const gps = ifd0[TAG.GPS_IFD]
+        ? readIFD(view, tiffStart, tiffStart + ifd0[TAG.GPS_IFD], le) || {} : {};
+
+      return normalize(ifd0, sub, gps);
+    } catch (err) {
+      console.warn('[exif] unreadable metadata, ignoring:', err);
+      return null;                                    // never let bad metadata block an import
+    }
+  }
+
+  /** Keep only fields worth storing, in a shape the UI can use directly. */
+  function normalize(ifd0, sub, gps) {
+    const out = {};
+
+    const taken = toIso(sub[TAG.DATETIME_ORIGINAL] || ifd0[TAG.DATETIME],
+                        sub[TAG.OFFSET_TIME_ORIGINAL]);
+    if (taken) out.takenAt = taken;
+
+    const camera = [ifd0[TAG.MAKE], ifd0[TAG.MODEL]].filter(Boolean).join(' ').trim();
+    if (camera) out.camera = camera;
+    if (ifd0[TAG.ORIENTATION]) out.orientation = ifd0[TAG.ORIENTATION];
+
+    /* Shooting settings: useful for judging whether a photo can be re-taken to match. */
+    const shot = {};
+    if (sub[TAG.F_NUMBER]) shot.fNumber = round(sub[TAG.F_NUMBER], 1);
+    if (sub[TAG.EXPOSURE_TIME]) shot.exposureSec = sub[TAG.EXPOSURE_TIME];
+    if (sub[TAG.ISO]) shot.iso = Array.isArray(sub[TAG.ISO]) ? sub[TAG.ISO][0] : sub[TAG.ISO];
+    if (sub[TAG.FOCAL_LENGTH]) shot.focalLengthMm = round(sub[TAG.FOCAL_LENGTH], 1);
+    if (Object.keys(shot).length) out.shot = shot;
+
+    if (sub[TAG.PIXEL_X] && sub[TAG.PIXEL_Y]) {
+      out.originalPixels = { w: sub[TAG.PIXEL_X], h: sub[TAG.PIXEL_Y] };
+    }
+
+    const lat = toDecimal(gps[TAG.GPS_LAT], gps[TAG.GPS_LAT_REF]);
+    const lon = toDecimal(gps[TAG.GPS_LON], gps[TAG.GPS_LON_REF]);
+    if (lat != null && lon != null) {
+      const g = { lat: round(lat, 7), lon: round(lon, 7) };
+
+      if (gps[TAG.GPS_ALT] != null) {
+        /* AltitudeRef 1 means below sea level. */
+        g.altitudeM = round(gps[TAG.GPS_ALT_REF] === 1 ? -gps[TAG.GPS_ALT] : gps[TAG.GPS_ALT], 1);
+      }
+      /* Accuracy matters more than usual here: GPS under a closed canopy is poor,
+         which is exactly where this app gets used. */
+      if (gps[TAG.GPS_H_ERROR] != null) g.accuracyM = round(gps[TAG.GPS_H_ERROR], 1);
+      else if (gps[TAG.GPS_DOP] != null) g.dop = round(gps[TAG.GPS_DOP], 1);
+
+      /* Which way the camera faced — lets a re-inspection photograph the same aspect. */
+      if (gps[TAG.GPS_IMG_DIR] != null) {
+        g.bearingDeg = round(gps[TAG.GPS_IMG_DIR], 1);
+        g.bearingRef = gps[TAG.GPS_IMG_DIR_REF] === 'M' ? 'magnetic' : 'true';
+      }
+      out.gps = g;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function round(n, places) {
+    const f = Math.pow(10, places);
+    return Math.round(n * f) / f;
+  }
+
+  /** Read just the head of a File and parse it. */
+  async function fromFile(file) {
+    try {
+      const head = file.slice(0, HEAD_BYTES);
+      return parseBuffer(await head.arrayBuffer());
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** 0–360° → an eight-point compass label. */
+  function compass(deg) {
+    if (deg == null) return '';
+    const points = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return points[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+  }
+
+  /** Decimal degrees → the DMS form surveyors and mapping tools expect. */
+  function formatLatLon(lat, lon) {
+    const one = (v, pos, neg) => {
+      const hemi = v >= 0 ? pos : neg;
+      const a = Math.abs(v);
+      const d = Math.floor(a);
+      const m = Math.floor((a - d) * 60);
+      const s = ((a - d) * 60 - m) * 60;
+      return d + '°' + String(m).padStart(2, '0') + "'" + s.toFixed(2) + '" ' + hemi;
+    };
+    return one(lat, 'N', 'S') + ', ' + one(lon, 'E', 'W');
+  }
+
+  return { fromFile, parseBuffer, compass, formatLatLon };
+})();
+/* ============================================================================
+   6c. PHOTO ANNOTATION
+
+   Mark up a photo to show an arborist where to cut.
+
+   Annotations are stored as VECTORS in normalized (0..1) photo coordinates, never
+   burned into the stored image. That keeps the original photo intact, keeps the
+   marks editable and undoable forever, costs almost nothing to store, and stays
+   crisp at any zoom.
+
+   The one drawback of vectors is that someone browsing photos/ in Explorer would not
+   see them — so savePackage ALSO writes a flattened "<id>-marked.jpg" beside the
+   original whenever a photo has marks. You get both: an editable master and a
+   shareable rendering.
+
+   The SVG and canvas renderers below are deliberately written from the same geometry
+   helpers, so what you draw on screen is exactly what lands in the exported JPEG.
+   ========================================================================== */
+
+const Annot = {
+
+  /* Chosen to stay visible against bark, foliage, and sky. */
+  COLORS: [
+    { value: '#ff2d20', label: 'Red' },
+    { value: '#ffd400', label: 'Yellow' },
+    { value: '#00e5ff', label: 'Cyan' },
+    { value: '#ffffff', label: 'White' },
+  ],
+
+  TOOLS: [
+    { value: 'line',    label: 'Line',    hint: 'Drag to draw a straight cut line.' },
+    { value: 'arrow',   label: 'Arrow',   hint: 'Drag to point at something.' },
+    { value: 'free',    label: 'Freehand',hint: 'Draw freely — trace a limb or a wound.' },
+    { value: 'ellipse', label: 'Circle',  hint: 'Drag a box to ring an area.' },
+  ],
+
+  DEFAULT_COLOR: '#ff2d20',
+  DEFAULT_WIDTH: 9,          // in viewBox units, where the photo is 1000 units wide
+  VB_W: 1000,
+
+  /** Photo aspect expressed in the 1000-unit-wide drawing space. */
+  vbH(photo) {
+    const w = photo.w || 4, h = photo.h || 3;
+    return this.VB_W * (h / w);
+  },
+
+  count(photo) {
+    return (photo.annotations || []).length;
+  },
+
+  /* -------- geometry shared by both renderers -------------------------------- */
+
+  /** Arrowhead polygon for the segment a→b, as an array of [x,y] pairs. */
+  arrowHead(ax, ay, bx, by, width) {
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const ux = (bx - ax) / len, uy = (by - ay) / len;
+    const size = Math.max(width * 3.2, 14);
+    /* Base of the head, stepped back along the shaft, then offset perpendicular. */
+    const baseX = bx - ux * size, baseY = by - uy * size;
+    const px = -uy, py = ux;
+    const half = size * 0.42;
+    return [
+      [bx, by],
+      [baseX + px * half, baseY + py * half],
+      [baseX - px * half, baseY - py * half],
+    ];
+  },
+
+  /** Where the shaft should stop so it does not poke through the arrowhead. */
+  arrowShaftEnd(ax, ay, bx, by, width) {
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const size = Math.max(width * 3.2, 14);
+    const back = Math.min(size * 0.75, len);
+    return [bx - (bx - ax) / len * back, by - (by - ay) / len * back];
+  },
+
+  ellipseBox(points) {
+    const [a, b] = points;
+    return {
+      cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
+      rx: Math.abs(b.x - a.x) / 2, ry: Math.abs(b.y - a.y) / 2,
+    };
+  },
+
+  /* -------- SVG renderer (screen) -------------------------------------------- */
+
+  /**
+   * Inner SVG markup for a set of annotations.
+   * @param scaleY viewBox height, so normalized y maps correctly.
+   */
+  toSvg(annotations, vbH) {
+    const X = p => (p.x * this.VB_W).toFixed(2);
+    const Y = p => (p.y * vbH).toFixed(2);
+
+    return (annotations || []).map(a => {
+      const stroke = 'stroke="' + esc(a.color) + '" stroke-width="' + a.width
+        + '" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+      /* A dark casing under every mark keeps red readable against dark bark. */
+      const casing = 'stroke="rgba(0,0,0,.45)" stroke-width="' + (a.width + 4)
+        + '" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+      const pts = a.points || [];
+      if (!pts.length) return '';
+
+      if (a.type === 'free') {
+        const d = 'M' + pts.map(p => X(p) + ',' + Y(p)).join(' L');
+        return '<path d="' + d + '" ' + casing + '/><path d="' + d + '" ' + stroke + '/>';
+      }
+
+      if (pts.length < 2) return '';
+      const a1 = { x: pts[0].x, y: pts[0].y }, b1 = { x: pts[1].x, y: pts[1].y };
+
+      if (a.type === 'ellipse') {
+        const e = this.ellipseBox([a1, b1]);
+        const attrs = 'cx="' + (e.cx * this.VB_W).toFixed(2) + '" cy="' + (e.cy * vbH).toFixed(2)
+          + '" rx="' + (e.rx * this.VB_W).toFixed(2) + '" ry="' + (e.ry * vbH).toFixed(2) + '"';
+        return '<ellipse ' + attrs + ' ' + casing + '/><ellipse ' + attrs + ' ' + stroke + '/>';
+      }
+
+      const ax = +X(a1), ay = +Y(a1), bx = +X(b1), by = +Y(b1);
+
+      if (a.type === 'arrow') {
+        const end = this.arrowShaftEnd(ax, ay, bx, by, a.width);
+        const head = this.arrowHead(ax, ay, bx, by, a.width)
+          .map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ');
+        const shaft = 'x1="' + ax + '" y1="' + ay + '" x2="' + end[0].toFixed(2)
+          + '" y2="' + end[1].toFixed(2) + '"';
+        return '<line ' + shaft + ' ' + casing + '/>'
+          + '<polygon points="' + head + '" fill="rgba(0,0,0,.45)" stroke="rgba(0,0,0,.45)" stroke-width="4" stroke-linejoin="round"/>'
+          + '<line ' + shaft + ' ' + stroke + '/>'
+          + '<polygon points="' + head + '" fill="' + esc(a.color) + '"/>';
+      }
+
+      const line = 'x1="' + ax + '" y1="' + ay + '" x2="' + bx + '" y2="' + by + '"';
+      return '<line ' + line + ' ' + casing + '/><line ' + line + ' ' + stroke + '/>';
+    }).join('');
+  },
+
+  /* -------- Canvas renderer (export) ----------------------------------------- */
+
+  /** Paint annotations onto a 2D context sized pxW × pxH. */
+  drawToCanvas(ctx, annotations, pxW, pxH) {
+    /* Normalized coords scale by the real pixel size; stroke widths were authored
+       against a 1000-unit width, so they scale by the same factor. */
+    const k = pxW / this.VB_W;
+    const X = p => p.x * pxW, Y = p => p.y * pxH;
+
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    (annotations || []).forEach(a => {
+      const pts = a.points || [];
+      if (!pts.length) return;
+      const width = a.width * k;
+
+      const strokePass = (color, extra) => {
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = width + extra;
+
+        ctx.beginPath();
+        if (a.type === 'free') {
+          ctx.moveTo(X(pts[0]), Y(pts[0]));
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(X(pts[i]), Y(pts[i]));
+          ctx.stroke();
+          return;
+        }
+        if (pts.length < 2) return;
+
+        if (a.type === 'ellipse') {
+          const e = this.ellipseBox(pts);
+          ctx.ellipse(e.cx * pxW, e.cy * pxH, e.rx * pxW, e.ry * pxH, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          return;
+        }
+
+        const ax = X(pts[0]), ay = Y(pts[0]), bx = X(pts[1]), by = Y(pts[1]);
+        if (a.type === 'arrow') {
+          const end = this.arrowShaftEnd(ax, ay, bx, by, width);
+          ctx.moveTo(ax, ay); ctx.lineTo(end[0], end[1]);
+          ctx.stroke();
+          const head = this.arrowHead(ax, ay, bx, by, width);
+          ctx.beginPath();
+          ctx.moveTo(head[0][0], head[0][1]);
+          ctx.lineTo(head[1][0], head[1][1]);
+          ctx.lineTo(head[2][0], head[2][1]);
+          ctx.closePath();
+          ctx.fill();
+          if (extra) ctx.stroke();
+          return;
+        }
+        ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+        ctx.stroke();
+      };
+
+      strokePass('rgba(0,0,0,.45)', 4 * k);   // casing first
+      strokePass(a.color, 0);
+    });
+  },
+
+  /**
+   * Render a photo with its annotations burned in.
+   * @returns {Promise<Blob|null>} JPEG, or null if there is nothing to mark.
+   */
+  async flatten(photo) {
+    if (!this.count(photo)) return null;
+    const blob = await Store.get(Photos.key(photo.id));
+    if (!blob) return null;
+
+    const bitmap = await createImageBitmap(blob);
+    const w = bitmap.width, h = bitmap.height;
+
+    let canvas, ctx;
+    if (typeof OffscreenCanvas !== 'undefined') {
+      canvas = new OffscreenCanvas(w, h);
+      ctx = canvas.getContext('2d');
+    } else {
+      canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      ctx = canvas.getContext('2d');
+    }
+
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    this.drawToCanvas(ctx, photo.annotations, w, h);
+    if (bitmap.close) bitmap.close();
+
+    return canvas.convertToBlob
+      ? canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
+      : new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
+  },
+};
+/* ============================================================================
+   7. ZIP READER / WRITER
+   A real ZIP, written by hand against the PKZIP APPNOTE spec. No libraries:
+   compression comes from the platform's own CompressionStream('deflate-raw').
+
+   Already-compressed payloads (JPEG, PNG) are STORED — deflating them again costs
+   CPU and gains nothing. Only the JSON is deflated, where it wins big.
+
+   The reader accepts both STORE and DEFLATE, so a package that someone unzipped,
+   edited, and re-zipped with Explorer or 7-Zip still opens.
+   ========================================================================== */
+
+const ZIP = (function () {
+
+  const LOCAL_SIG   = 0x04034b50;
+  const CENTRAL_SIG = 0x02014b50;
+  const EOCD_SIG    = 0x06054b50;
+  const UTF8_FLAG   = 0x800;          // general purpose bit 11
+
+  const CRC_TABLE = (function () {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[i] = c >>> 0;
+    }
+    return table;
+  })();
+
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  async function deflateRaw(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  async function inflateRaw(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  /** MS-DOS packed date/time, as the format requires. */
+  function dosStamp(date) {
+    const year = Math.max(1980, date.getFullYear());
+    return {
+      time: (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1),
+      date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+    };
+  }
+
+  const encoder = new TextEncoder();
+
+  async function toBytes(data) {
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    return encoder.encode(String(data));
+  }
+
+  /**
+   * Build a ZIP Blob.
+   * @param entries [{ name, data, compress? }]  compress defaults to false (STORE).
+   */
+  async function write(entries) {
+    const parts   = [];       // Blob pieces, in file order
+    const central = [];       // central directory records
+    const stamp   = dosStamp(new Date());
+    let offset = 0;
+
+    for (const entry of entries) {
+      const nameBytes = encoder.encode(entry.name);
+      const raw       = await toBytes(entry.data);
+      const crc       = crc32(raw);
+
+      const useDeflate = !!entry.compress;
+      const payload    = useDeflate ? await deflateRaw(raw) : raw;
+      const method     = useDeflate ? 8 : 0;
+
+      /* --- local file header --- */
+      const local = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, LOCAL_SIG, true);
+      lv.setUint16(4, useDeflate ? 20 : 10, true);   // version needed
+      lv.setUint16(6, UTF8_FLAG, true);
+      lv.setUint16(8, method, true);
+      lv.setUint16(10, stamp.time, true);
+      lv.setUint16(12, stamp.date, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, payload.length, true);
+      lv.setUint32(22, raw.length, true);
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);                     // extra field length
+      local.set(nameBytes, 30);
+
+      parts.push(local, payload);
+
+      /* --- central directory record (written after all files) --- */
+      const cd = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(cd.buffer);
+      cv.setUint32(0, CENTRAL_SIG, true);
+      cv.setUint16(4, 20, true);                     // version made by
+      cv.setUint16(6, useDeflate ? 20 : 10, true);
+      cv.setUint16(8, UTF8_FLAG, true);
+      cv.setUint16(10, method, true);
+      cv.setUint16(12, stamp.time, true);
+      cv.setUint16(14, stamp.date, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, payload.length, true);
+      cv.setUint32(24, raw.length, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);                     // extra
+      cv.setUint16(32, 0, true);                     // comment
+      cv.setUint16(34, 0, true);                     // disk number
+      cv.setUint16(36, 0, true);                     // internal attrs
+      cv.setUint32(38, 0, true);                     // external attrs
+      cv.setUint32(42, offset, true);                // offset of local header
+      cd.set(nameBytes, 46);
+      central.push(cd);
+
+      offset += local.length + payload.length;
+    }
+
+    const centralOffset = offset;
+    let centralSize = 0;
+    central.forEach(cd => { parts.push(cd); centralSize += cd.length; });
+
+    /* --- end of central directory --- */
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, EOCD_SIG, true);
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, central.length, true);
+    ev.setUint16(10, central.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, centralOffset, true);
+    ev.setUint16(20, 0, true);
+    parts.push(eocd);
+
+    return new Blob(parts, { type: 'application/zip' });
+  }
+
+  /**
+   * Read a ZIP Blob/ArrayBuffer.
+   * @returns Map<name, Uint8Array>
+   */
+  async function read(input) {
+    const bytes = input instanceof Uint8Array
+      ? input
+      : new Uint8Array(input instanceof Blob ? await input.arrayBuffer() : input);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+    /* Locate the end-of-central-directory record by scanning backwards. */
+    let eocd = -1;
+    const scanFloor = Math.max(0, bytes.length - 66000);
+    for (let i = bytes.length - 22; i >= scanFloor; i--) {
+      if (view.getUint32(i, true) === EOCD_SIG) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('Not a ZIP file (no end-of-central-directory record).');
+
+    const count         = view.getUint16(eocd + 10, true);
+    let   centralCursor = view.getUint32(eocd + 16, true);
+    const files = new Map();
+
+    for (let n = 0; n < count; n++) {
+      if (view.getUint32(centralCursor, true) !== CENTRAL_SIG) {
+        throw new Error('Damaged ZIP central directory.');
+      }
+      const method     = view.getUint16(centralCursor + 10, true);
+      const compSize   = view.getUint32(centralCursor + 20, true);
+      const nameLen    = view.getUint16(centralCursor + 28, true);
+      const extraLen   = view.getUint16(centralCursor + 30, true);
+      const commentLen = view.getUint16(centralCursor + 32, true);
+      const localAt    = view.getUint32(centralCursor + 42, true);
+      const name = new TextDecoder().decode(bytes.subarray(centralCursor + 46, centralCursor + 46 + nameLen));
+
+      /* The local header's name/extra lengths can differ from the central copy,
+         so the data offset must be computed from the local header itself. */
+      if (view.getUint32(localAt, true) !== LOCAL_SIG) throw new Error('Damaged ZIP entry: ' + name);
+      const localNameLen  = view.getUint16(localAt + 26, true);
+      const localExtraLen = view.getUint16(localAt + 28, true);
+      const dataAt = localAt + 30 + localNameLen + localExtraLen;
+
+      if (!name.endsWith('/')) {
+        const payload = bytes.subarray(dataAt, dataAt + compSize);
+        let content;
+        if (method === 0)      content = payload;
+        else if (method === 8) content = await inflateRaw(payload);
+        else throw new Error('Unsupported compression in ZIP entry: ' + name);
+        files.set(name, content);
+      }
+
+      centralCursor += 46 + nameLen + extraLen + commentLen;
+    }
+    return files;
+  }
+
+  return { write, read, crc32 };
+})();
+/* ============================================================================
+   8. GEOMETRY & SCALE
+
+   Three coordinate spaces, kept deliberately distinct:
+     normalized  0..1 against the plan image. What gets SAVED. Survives zoom,
+                 window resize, and re-scanning the plan at a different DPI.
+     viewBox     SVG user units. Always 1000 wide, height follows the plan's
+                 aspect ratio, so it is ISOTROPIC — equal distances in x and y
+                 are equal on the ground. Marker sizes live here, which is why a
+                 894px scan and an 8000px scan draw identically.
+     screen      CSS pixels after pan/zoom.
+
+   Calibration is stored as two NORMALIZED points plus a real-world length, not as
+   a precomputed ratio. Re-import the plan at a different resolution and the scale
+   still reads correctly, because the ratio is re-derived on every use.
+   ========================================================================== */
+
+const VB_WIDTH = 1000;
+const DEFAULT_ASPECT = 1.25;
+
+function planAspect() {
+  const bg = state.background;
+  return (bg.width && bg.height) ? bg.height / bg.width : DEFAULT_ASPECT;
+}
+
+const vbHeight = () => VB_WIDTH * planAspect();
+
+/** Normalized → viewBox units. */
+const vbX = x => x * VB_WIDTH;
+const vbY = y => y * vbHeight();
+
+/** Distance between two normalized points, in viewBox units. */
+function vbDistance(x1, y1, x2, y2) {
+  const dx = (x2 - x1) * VB_WIDTH;
+  const dy = (y2 - y1) * vbHeight();
+  return Math.hypot(dx, dy);
+}
+
+/** Feet per viewBox unit, or null when the plan has not been calibrated. */
+function feetPerVbUnit() {
+  const c = state.scale && state.scale.calibration;
+  if (!c || !c.realFeet) return null;
+  const d = vbDistance(c.x1, c.y1, c.x2, c.y2);
+  return d > 0 ? c.realFeet / d : null;
+}
+
+const hasScale = () => feetPerVbUnit() != null;
+
+function ftToVb(ft) {
+  const f = feetPerVbUnit();
+  return f ? ft / f : null;
+}
+
+function vbToFt(units) {
+  const f = feetPerVbUnit();
+  return f ? units * f : null;
+}
+
+/** Format a distance for display, respecting the calibration's unit choice. */
+function fmtDistance(feet) {
+  if (feet == null) return '—';
+  if (state.scale.units === 'm') return (feet * M_PER_FT).toFixed(1) + ' m';
+  return feet < 10 ? feet.toFixed(1) + ' ft' : Math.round(feet) + ' ft';
+}
+
+/* -------- Element geometry helpers ---------------------------------------- */
+
+/** Plan pixel size of the canvas at zoom 1. */
+function planPixelSize() {
+  const bg = state.background;
+  if (bg.width && bg.height) return { w: bg.width, h: bg.height };
+  return { w: 800, h: 800 * DEFAULT_ASPECT };
+}
+
+/** Convert a pointer event to normalized plan coordinates. */
+function eventToNormalized(evt) {
+  const rect = $('#canvas').getBoundingClientRect();
+  return {
+    x: clamp((evt.clientX - rect.left) / rect.width, 0, 1),
+    y: clamp((evt.clientY - rect.top) / rect.height, 0, 1),
+  };
+}
+
+/* ============================================================================
+   9. RENDERING
+   Full redraw on every change. At the scale this app targets (a residential
+   property, tens of trees) that is far simpler than diffing and still instant.
+   ========================================================================== */
+
+let renderQueued = false;
+
+/** Coalesce bursts of changes into one paint. */
+function render() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    applyView();
+    renderMap();
+    renderSidebar();
+    renderStatus();
+  });
+}
+
+/** Size and position the canvas, and keep the plan image in sync. */
+function applyView() {
+  const canvas = $('#canvas');
+  const size = planPixelSize();
+  const zoom = state.view.zoom;
+
+  canvas.style.width  = (size.w * zoom) + 'px';
+  canvas.style.height = (size.h * zoom) + 'px';
+  canvas.style.left   = state.view.panX + 'px';
+  canvas.style.top    = state.view.panY + 'px';
+
+  const img = $('#plan');
+  const hasPlan = !!state.background.dataUrl;
+  img.hidden = !hasPlan || !state.layers.plan;
+  if (hasPlan && img.getAttribute('src') !== state.background.dataUrl) {
+    img.src = state.background.dataUrl;
+  }
+  img.style.opacity = (state.background.opacity == null ? 100 : state.background.opacity) / 100;
+
+  $('#emptyState').hidden = hasPlan || state.trees.length > 0 || state.structures.length > 0;
+  $('#zoomLevel').textContent = Math.round(zoom * 100) + '%';
+
+  const svg = $('#svg');
+  svg.setAttribute('viewBox', '0 0 ' + VB_WIDTH + ' ' + vbHeight());
+  /* Exact fill: the canvas aspect equals the viewBox aspect by construction, so
+     'none' aligns markers to the image pixel-for-pixel with no letterboxing. */
+  svg.setAttribute('preserveAspectRatio', 'none');
+}
+
+function renderMap() {
+  renderStructures();
+  renderCanopy();
+  renderTrees();
+  renderScaleBar();
+}
+
+function renderStructures() {
+  const g = $('#gStructures');
+  if (!state.layers.structures) { g.innerHTML = ''; return; }
+
+  const H = vbHeight();
+  let html = '';
+
+  state.structures.forEach(s => {
+    const isSel = selection && selection.type === 'structure' && selection.uid === s.uid;
+    const x = vbX(s.x), y = s.y * H, w = s.width * VB_WIDTH, h = s.height * H;
+    html += '<g class="structure' + (isSel ? ' selected' : '') + '"'
+          + ' data-type="structure" data-uid="' + esc(s.uid) + '">'
+          + '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"'
+          + ' fill-opacity="' + (s.opacity == null ? 0.14 : s.opacity) + '"/>';
+
+    if (state.layers.labels && s.label) {
+      html += '<text x="' + (x + 5) + '" y="' + (y + 15) + '">' + esc(s.label) + '</text>';
+    }
+    if (isSel) {
+      /* Corner handle, bottom-right, for resizing. */
+      html += '<rect class="handle" data-handle="se" data-uid="' + esc(s.uid) + '"'
+            + ' x="' + (x + w - 6) + '" y="' + (y + h - 6) + '" width="12" height="12" rx="2"/>';
+    }
+    html += '</g>';
+  });
+
+  g.innerHTML = html;
+}
+
+function renderCanopy() {
+  const g = $('#gCanopy');
+  if (!state.layers.canopy || !hasScale()) { g.innerHTML = ''; return; }
+
+  let html = '';
+  state.trees.forEach(t => {
+    if (t.status === 'Removed') return;
+    const radiusFt = canopyRadiusFt(t);
+    if (!radiusFt) return;
+    const r = ftToVb(radiusFt);
+    if (!r || r <= 0) return;
+    const obs = latestObservation(t);
+    const cls = conditionMeta(obs && obs.condition).cls;
+    html += '<circle class="canopy ' + cls + '" cx="' + vbX(t.x) + '" cy="' + vbY(t.y)
+          + '" r="' + r.toFixed(2) + '"/>';
+  });
+  g.innerHTML = html;
+}
+
+function renderTrees() {
+  const g = $('#gTrees');
+  if (!state.layers.trees) { g.innerHTML = ''; return; }
+
+  let html = '';
+  state.trees.forEach(t => {
+    const isSel = selection && selection.type === 'tree' && selection.uid === t.uid;
+    const obs = latestObservation(t);
+    const cls = conditionMeta(obs && obs.condition).cls;
+    const cx = vbX(t.x), cy = vbY(t.y);
+
+    /* Marker grows a little with trunk size so big trees read as big at a glance. */
+    const dbh = obs && obs.dbhIn ? obs.dbhIn : 0;
+    const r = clamp(7 + Math.sqrt(dbh) * 0.9, 7, 16);
+
+    html += '<g class="tree-marker ' + cls + (isSel ? ' selected' : '')
+          + (t.status === 'Removed' ? ' removed' : '') + '"'
+          + ' data-type="tree" data-uid="' + esc(t.uid) + '">'
+          + '<circle class="tree-dot" cx="' + cx + '" cy="' + cy + '" r="' + r.toFixed(1) + '"/>';
+
+    if (state.layers.labels) {
+      html += '<text class="tree-label" x="' + cx + '" y="' + cy + '">' + esc(t.treeId) + '</text>';
+      if (t.species) {
+        html += '<text class="tree-caption" x="' + cx + '" y="' + (cy + r + 11).toFixed(1) + '">'
+              + esc(t.species) + '</text>';
+      }
+    }
+    html += '</g>';
+  });
+  g.innerHTML = html;
+}
+
+/** A printed scale bar, sized to a round number of feet. */
+function renderScaleBar() {
+  const el = $('#scaleBar');
+  const fpu = feetPerVbUnit();
+  if (!fpu || !state.background.dataUrl) { el.hidden = true; return; }
+
+  /* Aim for roughly 120 screen px, then round to a surveyor-friendly number. */
+  const size = planPixelSize();
+  const vbPerScreenPx = VB_WIDTH / (size.w * state.view.zoom);
+  const targetFeet = 120 * vbPerScreenPx * fpu;
+
+  const NICE = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+  let feet = NICE[NICE.length - 1];
+  for (const n of NICE) { if (n >= targetFeet) { feet = n; break; } }
+
+  const widthPx = (feet / fpu) / vbPerScreenPx;
+  el.hidden = false;
+  el.innerHTML = '<div>' + fmtDistance(feet) + '</div>'
+               + '<div class="rule" style="width:' + Math.round(widthPx) + 'px"></div>';
+}
+
+/* -------- Transient overlay (draft box, measuring, calibration) ------------ */
+
+function clearOverlay() { $('#gOverlay').innerHTML = ''; }
+
+function drawDraftRect(x1, y1, x2, y2) {
+  const H = vbHeight();
+  const x = Math.min(x1, x2) * VB_WIDTH, y = Math.min(y1, y2) * H;
+  const w = Math.abs(x2 - x1) * VB_WIDTH, h = Math.abs(y2 - y1) * H;
+  $('#gOverlay').innerHTML =
+    '<rect class="draft" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"/>';
+}
+
+/** Shared by the measure tool and scale calibration. */
+function drawMeasureLine(x1, y1, x2, y2, label) {
+  const ax = vbX(x1), ay = vbY(y1), bx = vbX(x2), by = vbY(y2);
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const nx = (by - ay), ny = -(bx - ax);
+  const len = Math.hypot(nx, ny) || 1;
+  const off = 12;
+
+  $('#gOverlay').innerHTML =
+      '<line class="measure-line" x1="' + ax + '" y1="' + ay + '" x2="' + bx + '" y2="' + by + '"/>'
+    + '<line class="measure-cap" x1="' + ax + '" y1="' + ay + '" x2="' + ax + '" y2="' + ay + '"/>'
+    + '<circle class="measure-cap" cx="' + ax + '" cy="' + ay + '" r="3" fill="#fff"/>'
+    + '<circle class="measure-cap" cx="' + bx + '" cy="' + by + '" r="3" fill="#fff"/>'
+    + (label
+        ? '<text class="measure-text" x="' + (mx + nx / len * off) + '" y="' + (my + ny / len * off) + '">'
+          + esc(label) + '</text>'
+        : '');
+}
+/* ============================================================================
+   10. INTERACTION
+   One pointer pipeline for mouse, pen, and touch. A drag only begins after the
+   pointer travels DRAG_THRESHOLD, so a tap reliably selects instead of nudging
+   a tree a few inches sideways — which matters a lot with a fingertip.
+   ========================================================================== */
+
+const DRAG_THRESHOLD = 4;      // screen px
+const ZOOM_MIN = 0.15, ZOOM_MAX = 8;
+
+let gesture = null;            // active drag/pan/draw operation
+const activePointers = new Map();
+let pinch = null;
+
+function setTool(next) {
+  tool = next;
+  const map = { select: 'toolSelect', tree: 'toolTree', box: 'toolBox', scale: 'toolScale', measure: 'toolMeasure' };
+  Object.keys(map).forEach(k => $('#' + map[k]).setAttribute('aria-pressed', String(k === next)));
+
+  const view = $('#view');
+  view.classList.toggle('placing', next !== 'select');
+
+  const hints = {
+    select:  '',
+    tree:    'Tap the plan to place a tree.',
+    box:     'Drag on the plan to draw a structure or area.',
+    scale:   'Drag along a known distance — the survey scale bar, a property line, a building face.',
+    measure: 'Drag to measure. Release to keep it on screen; press Esc to clear.',
+  };
+  showHint(hints[next]);
+  clearOverlay();
+}
+
+function showHint(text) {
+  const el = $('#hint');
+  el.hidden = !text;
+  el.textContent = text || '';
+}
+
+/* -------- Zoom & fit ------------------------------------------------------- */
+
+/** Zoom about a screen point so the spot under the cursor stays put. */
+function zoomAt(clientX, clientY, factor) {
+  const rect = $('#view').getBoundingClientRect();
+  const px = clientX - rect.left, py = clientY - rect.top;
+  const old = state.view.zoom;
+  const next = clamp(old * factor, ZOOM_MIN, ZOOM_MAX);
+  if (next === old) return;
+  const k = next / old;
+  state.view.panX = px - (px - state.view.panX) * k;
+  state.view.panY = py - (py - state.view.panY) * k;
+  state.view.zoom = next;
+  render();
+}
+
+function zoomCentre(factor) {
+  const rect = $('#view').getBoundingClientRect();
+  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
+}
+
+function fitToView() {
+  const view = $('#view').getBoundingClientRect();
+  const size = planPixelSize();
+  const pad = 24;
+  const zoom = clamp(
+    Math.min((view.width - pad * 2) / size.w, (view.height - pad * 2) / size.h),
+    ZOOM_MIN, ZOOM_MAX
+  );
+  state.view.zoom = zoom;
+  state.view.panX = (view.width  - size.w * zoom) / 2;
+  state.view.panY = (view.height - size.h * zoom) / 2;
+  render();
+}
+
+/* -------- Selection -------------------------------------------------------- */
+
+function select(type, uid, opts) {
+  selection = (type && uid) ? { type: type, uid: uid } : null;
+  if (selection && !(opts && opts.keepTab)) showTab('Selected');
+  render();
+}
+
+function nextTreeId() {
+  let max = 0;
+  state.trees.forEach(t => {
+    const n = parseInt(String(t.treeId).replace(/[^0-9]/g, ''), 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  });
+  return String(max + 1);
+}
+
+/* -------- Pointer pipeline ------------------------------------------------- */
+
+function onPointerDown(evt) {
+  if (evt.button === 2) return;                       // let context menu through
+  const view = $('#view');
+  activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+
+  /* Two fingers down: start a pinch and abandon any in-flight drag. */
+  if (activePointers.size === 2) {
+    const pts = Array.from(activePointers.values());
+    pinch = {
+      startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+      startZoom: state.view.zoom,
+    };
+    gesture = null;
+    return;
+  }
+  if (activePointers.size > 2) return;
+
+  /* Capture keeps a drag alive if the pointer leaves the viewport. It can throw when
+     the pointer is no longer active, which must not abort the interaction. */
+  try { view.setPointerCapture(evt.pointerId); } catch (e) { /* non-fatal */ }
+
+  const pos = eventToNormalized(evt);
+  const hit = evt.target.closest('[data-uid]');
+
+  if (tool === 'tree') {
+    const before = snapshot();
+    const tree = newTree(pos.x, pos.y, nextTreeId());
+    state.trees.push(tree);
+    selection = { type: 'tree', uid: tree.uid };
+    setTool('select');
+    showTab('Selected');
+    commit(before);
+    setStatus('Tree ' + tree.treeId + ' placed. Fill in its details on the right.');
+    return;
+  }
+
+  if (tool === 'box') {
+    gesture = { kind: 'draw-box', x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
+    return;
+  }
+
+  if (tool === 'scale' || tool === 'measure') {
+    gesture = { kind: 'line', mode: tool, x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
+    return;
+  }
+
+  /* --- select tool --- */
+  const handle = evt.target.closest('[data-handle]');
+  if (handle) {
+    const s = structureByUid(handle.getAttribute('data-uid'));
+    if (s) {
+      gesture = { kind: 'resize', uid: s.uid, before: snapshot(), moved: false,
+                  startX: evt.clientX, startY: evt.clientY };
+      return;
+    }
+  }
+
+  if (hit) {
+    const type = hit.getAttribute('data-type');
+    const uid  = hit.getAttribute('data-uid');
+    const obj  = type === 'tree' ? treeByUid(uid) : structureByUid(uid);
+    if (obj) {
+      select(type, uid);
+      gesture = {
+        kind: 'move', type: type, uid: uid, before: snapshot(), moved: false,
+        startX: evt.clientX, startY: evt.clientY,
+        originX: obj.x, originY: obj.y,
+      };
+      return;
+    }
+  }
+
+  /* Empty space: pan, and clear the selection on a click that does not drag. */
+  gesture = {
+    kind: 'pan', moved: false,
+    startX: evt.clientX, startY: evt.clientY,
+    panX: state.view.panX, panY: state.view.panY,
+  };
+  view.classList.add('panning');
+}
+
+function onPointerMove(evt) {
+  if (activePointers.has(evt.pointerId)) {
+    activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  }
+
+  if (pinch && activePointers.size === 2) {
+    const pts = Array.from(activePointers.values());
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (pinch.startDist > 0) {
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const target = clamp(pinch.startZoom * (dist / pinch.startDist), ZOOM_MIN, ZOOM_MAX);
+      zoomAt(mid.x, mid.y, target / state.view.zoom);
+    }
+    return;
+  }
+
+  if (!gesture) return;
+  const canvasRect = $('#canvas').getBoundingClientRect();
+
+  switch (gesture.kind) {
+    case 'pan': {
+      const dx = evt.clientX - gesture.startX, dy = evt.clientY - gesture.startY;
+      if (!gesture.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      gesture.moved = true;
+      state.view.panX = gesture.panX + dx;
+      state.view.panY = gesture.panY + dy;
+      render();
+      break;
+    }
+    case 'move': {
+      const dx = evt.clientX - gesture.startX, dy = evt.clientY - gesture.startY;
+      if (!gesture.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      gesture.moved = true;
+      const obj = gesture.type === 'tree' ? treeByUid(gesture.uid) : structureByUid(gesture.uid);
+      if (!obj) return;
+      obj.x = clamp(gesture.originX + dx / canvasRect.width, 0, 1);
+      obj.y = clamp(gesture.originY + dy / canvasRect.height, 0, 1);
+      render();
+      break;
+    }
+    case 'resize': {
+      const s = structureByUid(gesture.uid);
+      if (!s) return;
+      gesture.moved = true;
+      const pos = eventToNormalized(evt);
+      s.width  = Math.max(0.005, pos.x - s.x);
+      s.height = Math.max(0.005, pos.y - s.y);
+      render();
+      break;
+    }
+    case 'draw-box': {
+      const pos = eventToNormalized(evt);
+      gesture.x2 = pos.x; gesture.y2 = pos.y;
+      drawDraftRect(gesture.x1, gesture.y1, gesture.x2, gesture.y2);
+      break;
+    }
+    case 'line': {
+      const pos = eventToNormalized(evt);
+      gesture.x2 = pos.x; gesture.y2 = pos.y;
+      const units = vbDistance(gesture.x1, gesture.y1, gesture.x2, gesture.y2);
+      const feet = vbToFt(units);
+      drawMeasureLine(gesture.x1, gesture.y1, gesture.x2, gesture.y2,
+        gesture.mode === 'measure'
+          ? (feet == null ? 'set scale first' : fmtDistance(feet))
+          : (feet == null ? '' : fmtDistance(feet)));
+      break;
+    }
+  }
+}
+
+function onPointerUp(evt) {
+  activePointers.delete(evt.pointerId);
+  if (activePointers.size < 2) pinch = null;
+
+  const view = $('#view');
+  view.classList.remove('panning');
+  if (view.hasPointerCapture && view.hasPointerCapture(evt.pointerId)) {
+    view.releasePointerCapture(evt.pointerId);
+  }
+  if (!gesture) return;
+  const g = gesture;
+  gesture = null;
+
+  switch (g.kind) {
+    case 'pan':
+      if (!g.moved) { selection = null; render(); }
+      break;
+
+    case 'move':
+      if (g.moved) {
+        const obj = g.type === 'tree' ? treeByUid(g.uid) : structureByUid(g.uid);
+        if (obj) obj.modifiedAt = nowIso();
+        commit(g.before);
+      }
+      break;
+
+    case 'resize':
+      if (g.moved) {
+        const s = structureByUid(g.uid);
+        if (s) s.modifiedAt = nowIso();
+        commit(g.before);
+      }
+      break;
+
+    case 'draw-box': {
+      clearOverlay();
+      const w = Math.abs(g.x2 - g.x1), h = Math.abs(g.y2 - g.y1);
+      if (w < 0.008 || h < 0.008) { setTool('select'); return; }   // ignore stray taps
+      const before = snapshot();
+      const s = newStructure(Math.min(g.x1, g.x2), Math.min(g.y1, g.y2), w, h);
+      state.structures.push(s);
+      selection = { type: 'structure', uid: s.uid };
+      setTool('select');
+      showTab('Selected');
+      commit(before);
+      break;
+    }
+
+    case 'line': {
+      const units = vbDistance(g.x1, g.y1, g.x2, g.y2);
+      if (units < 4) { clearOverlay(); return; }                   // too short to mean anything
+
+      if (g.mode === 'scale') {
+        pendingCalibration = { x1: g.x1, y1: g.y1, x2: g.x2, y2: g.y2 };
+        $('#scaleFeet').value = '';
+        $('#scaleDialog').showModal();
+        setTool('select');
+      } else {
+        /* Measurement stays on screen until Esc or the next action. */
+        setStatus(hasScale()
+          ? 'Measured ' + fmtDistance(vbToFt(units))
+          : 'Calibrate the plan scale first — measurements need a known reference.');
+      }
+      break;
+    }
+  }
+}
+
+/* -------- Wheel & keyboard ------------------------------------------------- */
+
+function onWheel(evt) {
+  evt.preventDefault();
+  zoomAt(evt.clientX, evt.clientY, evt.deltaY < 0 ? 1.12 : 1 / 1.12);
+}
+
+function onKeyDown(evt) {
+  const el = document.activeElement;
+  const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+
+  if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'z' && !evt.shiftKey) {
+    evt.preventDefault(); undo(); return;
+  }
+  if ((evt.ctrlKey || evt.metaKey) && (evt.key.toLowerCase() === 'y'
+      || (evt.shiftKey && evt.key.toLowerCase() === 'z'))) {
+    evt.preventDefault(); redo(); return;
+  }
+  if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 's') {
+    evt.preventDefault(); savePackage(); return;
+  }
+  if (typing) return;
+
+  switch (evt.key) {
+    case 'v': case 'V': setTool('select'); break;
+    case 't': case 'T': setTool('tree'); break;
+    case 'b': case 'B': setTool('box'); break;
+    case 's': case 'S': setTool('scale'); break;
+    case 'm': case 'M': setTool('measure'); break;
+    case 'Escape': setTool('select'); selection = null; clearOverlay(); render(); break;
+    case 'Delete': case 'Backspace': evt.preventDefault(); deleteSelected(); break;
+  }
+}
+
+/* -------- Deletion --------------------------------------------------------- */
+
+async function deleteSelected() {
+  if (!selection) return;
+
+  if (selection.type === 'tree') {
+    const t = selectedTree();
+    if (!t) return;
+    const weight = [];
+    if (t.observations.length) weight.push(t.observations.length + ' observation(s)');
+    if (t.photos.length)       weight.push(t.photos.length + ' photo(s)');
+    if (t.history.length)      weight.push(t.history.length + ' note(s)');
+    if (weight.length && !confirm(
+      'Delete tree ' + t.treeId + '?\n\nThis permanently removes ' + weight.join(', ') + '.'
+    )) return;
+
+    const before = snapshot();
+    /* Photo blobs stay in storage so undo can restore this tree intact; they are
+       simply not written to the next package. See Photos.remove. */
+    state.trees = state.trees.filter(x => x.uid !== t.uid);
+    selection = null;
+    commit(before);
+    setStatus('Tree ' + t.treeId + ' deleted.');
+  } else {
+    const s = selectedStructure();
+    if (!s) return;
+    const before = snapshot();
+    state.structures = state.structures.filter(x => x.uid !== s.uid);
+    selection = null;
+    commit(before);
+  }
+}
+/* ============================================================================
+   11. PANELS & FORMS
+
+   Inputs are bound once at startup and repopulated on render. `setValue` refuses
+   to overwrite a field the user is currently typing in — without that guard, a
+   render triggered by autosave would yank the caret out mid-word.
+   ========================================================================== */
+
+let currentTab = 'Selected';
+let pendingCalibration = null;
+let photoRenderToken = 0;
+
+const TABS = ['Selected', 'Trees', 'Visits', 'Project'];
+
+function showTab(name) {
+  currentTab = name;
+  TABS.forEach(t => {
+    $('#tab' + t).setAttribute('aria-selected', String(t === name));
+    $('#panel' + t).hidden = (t !== name);
+  });
+  renderSidebar();
+}
+
+/** Set a form value unless the user is actively editing that field. */
+function setValue(el, value) {
+  if (!el || document.activeElement === el) return;
+  const v = value == null ? '' : value;
+  if (el.type === 'checkbox') el.checked = !!value;
+  else if (el.value !== String(v)) el.value = v;
+}
+
+function renderSidebar() {
+  if (currentTab === 'Selected') renderSelectedPanel();
+  else if (currentTab === 'Trees') renderTreeList();
+  else if (currentTab === 'Visits') renderVisitPanel();
+  else if (currentTab === 'Project') renderProjectPanel();
+}
+
+/* -------- Chips (multi-select) --------------------------------------------- */
+
+function renderChips(container, options, selected) {
+  container.innerHTML = options.map(opt =>
+    '<button type="button" class="chip" data-value="' + esc(opt) + '" aria-pressed="'
+    + (selected.indexOf(opt) >= 0) + '">' + esc(opt) + '</button>'
+  ).join('');
+}
+
+/* -------- Selected panel ---------------------------------------------------- */
+
+function renderSelectedPanel() {
+  const tree = selectedTree();
+  const structure = selectedStructure();
+
+  $('#noSelection').hidden      = !!(tree || structure);
+  $('#treeEditor').hidden       = !tree;
+  $('#structureEditor').hidden  = !structure;
+
+  if (tree) renderTreeEditor(tree);
+  if (structure) renderStructureEditor(structure);
+}
+
+function renderTreeEditor(tree) {
+  setValue($('#fTreeId'), tree.treeId);
+  setValue($('#fStatus'), tree.status || 'Existing');
+  setValue($('#fSpecies'), tree.species);
+  setValue($('#fBotanical'), tree.botanical);
+  setValue($('#fProtected'), tree.protected);
+
+  const visit = activeVisit();
+  const obs = observationForActiveVisit(tree, false);
+  const badge = $('#obsVisitBadge');
+  badge.textContent = visit ? (visit.label ? visit.label + ' · ' : '') + fmtDate(visit.date) : '—';
+  badge.className = 'badge' + (obs ? '' : ' warn');
+  badge.title = obs
+    ? 'An observation exists for this visit.'
+    : 'No observation recorded for this visit yet — editing any field below will create one.';
+
+  /* Show the active visit's values if present; otherwise preview the carried-forward
+     values from the last visit so the field is not misleadingly blank. */
+  const shown = obs || latestObservation(tree);
+  setValue($('#fDbh'),       shown && shown.dbhIn    != null ? shown.dbhIn    : '');
+  setValue($('#fHeight'),    shown && shown.heightFt != null ? shown.heightFt : '');
+  setValue($('#fSpread'),    shown && shown.spreadFt != null ? shown.spreadFt : '');
+  setValue($('#fCondition'), shown ? shown.condition : 'Unassessed');
+  setValue($('#fPriority'),  shown ? shown.priority  : 'Not set');
+  setValue($('#fObsNotes'),  obs ? obs.notes : '');
+
+  renderChips($('#fDefects'), DEFECTS, (shown && shown.defects) || []);
+  renderChips($('#fRecommendations'), RECOMMENDATIONS, (shown && shown.recommendations) || []);
+
+  renderPhotoGrid(tree);
+  renderTreeLocation(tree);
+  renderObsHistory(tree);
+  renderNoteHistory(tree);
+}
+
+function renderStructureEditor(s) {
+  setValue($('#sLabel'), s.label);
+  setValue($('#sKind'), s.kind || 'Building');
+  setValue($('#sNotes'), s.notes);
+  setValue($('#sOpacity'), Math.round((s.opacity == null ? 0.14 : s.opacity) * 100));
+
+  const wFt = vbToFt(s.width * VB_WIDTH);
+  const hFt = vbToFt(s.height * vbHeight());
+  $('#sSize').textContent = (wFt != null && hFt != null)
+    ? 'Approximately ' + fmtDistance(wFt) + ' × ' + fmtDistance(hFt)
+      + ' (' + Math.round(wFt * hFt).toLocaleString() + ' sq ft)'
+    : 'Calibrate the plan scale to see real dimensions.';
+}
+
+/* -------- Photos ------------------------------------------------------------ */
+
+async function renderPhotoGrid(tree) {
+  const grid = $('#photoGrid');
+  const token = ++photoRenderToken;
+
+  $('#photoEmpty').hidden = tree.photos.length > 0;
+  if (!tree.photos.length) { grid.innerHTML = ''; return; }
+
+  grid.innerHTML = tree.photos.map(p => {
+    const marks = Annot.count(p);
+    const gps = p.exif && p.exif.gps;
+    return '<div class="photo" data-photo="' + esc(p.id) + '">'
+      + '<img alt="' + esc(p.caption || 'Tree photo') + '" data-slot="' + esc(p.id) + '">'
+      + '<button class="rm" data-remove="' + esc(p.id) + '" title="Remove photo">&times;</button>'
+      + (marks ? '<span class="marked" title="' + marks + ' mark(s) drawn on this photo">✎ '
+                 + marks + '</span>' : '')
+      + (p.caption || gps
+          ? '<div class="cap">' + (gps ? '📍 ' : '') + esc(p.caption || 'GPS tagged') + '</div>'
+          : '')
+      + '</div>';
+  }).join('');
+
+  for (const p of tree.photos) {
+    const url = await Photos.url(Photos.thumbKey(p.id)) || await Photos.url(Photos.key(p.id));
+    if (token !== photoRenderToken) return;            // a newer render superseded this one
+    const img = grid.querySelector('[data-slot="' + p.id + '"]');
+    if (img && url) img.src = url;
+  }
+}
+
+/* -------- Photo viewer & annotation ----------------------------------------- */
+
+let annotTarget = null;                      // { treeUid, photoId }
+let annotTool   = 'line';
+let annotColor  = Annot.DEFAULT_COLOR;
+let annotDraft  = null;                      // in-progress mark, not yet committed
+
+function currentAnnotPhoto() {
+  if (!annotTarget) return null;
+  const tree = treeByUid(annotTarget.treeUid);
+  if (!tree) return null;
+  return tree.photos.find(p => p.id === annotTarget.photoId) || null;
+}
+
+async function openLightbox(tree, photoId) {
+  const photo = tree.photos.find(p => p.id === photoId);
+  if (!photo) return;
+
+  annotTarget = { treeUid: tree.uid, photoId: photoId };
+  annotDraft = null;
+
+  const url = await Photos.url(Photos.key(photoId));
+  $('#lightboxImg').src = url || '';
+  $('#lightboxTitle').textContent =
+    'Tree ' + tree.treeId + (tree.species ? ' — ' + tree.species : '');
+  $('#lightboxCaption').value = photo.caption || '';
+
+  renderAnnotToolbar();
+  renderAnnotations();
+  renderExifPanel(photo);
+  $('#lightbox').showModal();
+}
+
+function renderAnnotToolbar() {
+  $('#annotToolRow').innerHTML = Annot.TOOLS.map(t =>
+    '<button type="button" class="btn-sm" data-tool="' + esc(t.value) + '" aria-pressed="'
+    + (t.value === annotTool) + '">' + esc(t.label) + '</button>').join('');
+
+  $('#annotColorRow').innerHTML = Annot.COLORS.map(c =>
+    '<button type="button" class="swatch" data-color="' + esc(c.value) + '" title="' + esc(c.label)
+    + '" aria-label="' + esc(c.label) + '" aria-pressed="' + (c.value === annotColor)
+    + '" style="background:' + esc(c.value) + '"></button>').join('');
+
+  const tool = Annot.TOOLS.find(t => t.value === annotTool);
+  $('#annotHint').textContent = tool ? tool.hint : '';
+}
+
+function renderAnnotations() {
+  const layer = $('#annotLayer');
+  const photo = currentAnnotPhoto();
+  if (!photo) { layer.innerHTML = ''; return; }
+
+  const vbH = Annot.vbH(photo);
+  layer.setAttribute('viewBox', '0 0 ' + Annot.VB_W + ' ' + vbH);
+
+  const committed = photo.annotations || [];
+  layer.innerHTML = Annot.toSvg(committed, vbH)
+    + (annotDraft ? Annot.toSvg([annotDraft], vbH) : '');
+
+  $('#annotCount').textContent = committed.length
+    ? committed.length + (committed.length === 1 ? ' mark' : ' marks')
+    : 'No marks yet';
+  $('#annotUndo').disabled = !committed.length;
+  $('#annotClear').disabled = !committed.length;
+}
+
+function renderExifPanel(photo) {
+  const rows = [];
+  const visit = state.visits.find(v => v.id === photo.visitId);
+  const e = photo.exif;
+
+  rows.push(['Taken', fmtDateTime(photo.takenAt)
+    + (e && e.takenAt ? '' : ' <span class="muted">(file date — no EXIF)</span>')]);
+  if (visit) rows.push(['Visit', esc(fmtDate(visit.date)) + (visit.label ? ' · ' + esc(visit.label) : '')]);
+  rows.push(['Stored', photo.w + '×' + photo.h + ' · ' + fmtBytes(photo.bytes)]);
+
+  if (e) {
+    if (e.camera) rows.push(['Camera', esc(e.camera)]);
+    if (e.originalPixels) {
+      const mp = (e.originalPixels.w * e.originalPixels.h / 1e6).toFixed(1);
+      rows.push(['Original', e.originalPixels.w + '×' + e.originalPixels.h + ' (' + mp + ' MP)']);
+    }
+    if (e.shot) {
+      const bits = [];
+      if (e.shot.focalLengthMm) bits.push(e.shot.focalLengthMm + 'mm');
+      if (e.shot.fNumber) bits.push('f/' + e.shot.fNumber);
+      if (e.shot.exposureSec) {
+        bits.push(e.shot.exposureSec >= 1
+          ? e.shot.exposureSec + 's'
+          : '1/' + Math.round(1 / e.shot.exposureSec) + 's');
+      }
+      if (e.shot.iso) bits.push('ISO ' + e.shot.iso);
+      if (bits.length) rows.push(['Exposure', bits.join(' · ')]);
+    }
+  }
+
+  let html = '<dl>' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl>';
+
+  if (e && e.gps) {
+    const g = e.gps;
+    const lines = [
+      '<b>GPS</b> ' + g.lat.toFixed(6) + ', ' + g.lon.toFixed(6),
+      '<div class="muted">' + esc(EXIF.formatLatLon(g.lat, g.lon)) + '</div>',
+    ];
+    const detail = [];
+    if (g.accuracyM != null) detail.push('±' + g.accuracyM + ' m reported');
+    else if (g.dop != null) detail.push('DOP ' + g.dop);
+    if (g.altitudeM != null) detail.push(Math.round(g.altitudeM) + ' m elevation');
+    if (g.bearingDeg != null) {
+      detail.push('facing ' + Math.round(g.bearingDeg) + '° ' + EXIF.compass(g.bearingDeg)
+        + (g.bearingRef === 'magnetic' ? ' (mag)' : ''));
+    }
+    if (detail.length) lines.push('<div class="muted">' + esc(detail.join(' · ')) + '</div>');
+    html += '<div class="gps">' + lines.join('') + '</div>';
+  } else {
+    html += '<p class="muted" style="margin:9px 0 0">No GPS in this photo. Phones omit it when '
+      + 'location access is off for the camera, and screenshots or edited copies lose it.</p>';
+  }
+
+  $('#exifPanel').innerHTML = html;
+}
+
+/* -------- Tree location, averaged from photo GPS ---------------------------- */
+
+function renderTreeLocation(tree) {
+  const section = $('#treeLocationSection');
+  const loc = treeLocation(tree);
+  section.hidden = !loc;
+  if (!loc) return;
+
+  const parts = [
+    '<b>' + loc.lat.toFixed(6) + ', ' + loc.lon.toFixed(6) + '</b>',
+    esc(EXIF.formatLatLon(loc.lat, loc.lon)),
+    'Averaged from ' + loc.samples + ' photo' + (loc.samples === 1 ? '' : 's') + '.',
+  ];
+  if (loc.accuracyM != null) parts.push('Camera reported ±' + loc.accuracyM + ' m.');
+  /* Disagreement between fixes is the more honest number, so lead with it when large. */
+  if (loc.samples > 1) {
+    parts.push(loc.spreadM > 15
+      ? '<span class="warn">Fixes disagree by ' + Math.round(loc.spreadM)
+        + ' m</span> — typical under canopy; treat this as approximate.'
+      : 'Fixes agree within ' + loc.spreadM.toFixed(1) + ' m.');
+  }
+  $('#treeLocationText').innerHTML = parts.join(' ');
+}
+
+/* -------- Observation & note history ---------------------------------------- */
+
+function deltaHtml(current, previous, unit) {
+  if (current == null || previous == null || current === previous) return '';
+  const d = current - previous;
+  const cls = d > 0 ? 'up' : 'down';
+  return ' <span class="delta ' + cls + '">' + (d > 0 ? '+' : '') + (Math.round(d * 10) / 10)
+       + ' ' + unit + '</span>';
+}
+
+function renderObsHistory(tree) {
+  const host = $('#obsHistory');
+  const all = sortedObservations(tree);
+  if (!all.length) {
+    host.innerHTML = '<p class="empty-note">No observations yet. '
+      + 'Enter a measurement above to record one against the active visit.</p>';
+    return;
+  }
+
+  /* Newest first for reading, but deltas compare against the chronologically
+     previous visit. */
+  host.innerHTML = all.slice().reverse().map((o, idx) => {
+    const chronoIdx = all.length - 1 - idx;
+    const prev = chronoIdx > 0 ? all[chronoIdx - 1] : null;
+    const visit = state.visits.find(v => v.id === o.visitId);
+    const cond = conditionMeta(o.condition);
+
+    const rows = [];
+    if (o.dbhIn    != null) rows.push(['DBH', o.dbhIn + '"' + deltaHtml(o.dbhIn, prev && prev.dbhIn, 'in')]);
+    if (o.heightFt != null) rows.push(['Height', o.heightFt + ' ft' + deltaHtml(o.heightFt, prev && prev.heightFt, 'ft')]);
+    if (o.spreadFt != null) rows.push(['Spread', o.spreadFt + ' ft' + deltaHtml(o.spreadFt, prev && prev.spreadFt, 'ft')]);
+    if (o.condition && o.condition !== 'Unassessed') rows.push(['Condition', esc(o.condition)]);
+    if (o.priority && o.priority !== 'Not set') rows.push(['Priority', esc(o.priority)]);
+    if (o.defects && o.defects.length) rows.push(['Defects', esc(o.defects.join(', '))]);
+    if (o.recommendations && o.recommendations.length) rows.push(['Work', esc(o.recommendations.join(', '))]);
+
+    return '<div class="entry" style="border-left-color:var(--' + cond.cls.replace('cond-', '') + ')">'
+      + '<div class="when">' + esc(fmtDate(o.date))
+      + (visit && visit.label ? ' · ' + esc(visit.label) : '')
+      + (chronoIdx === all.length - 1 ? ' <span class="badge">current</span>' : '')
+      + '</div>'
+      + (rows.length ? '<dl>' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl>' : '')
+      + (o.notes ? '<div class="body" style="margin-top:5px">' + esc(o.notes) + '</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function renderNoteHistory(tree) {
+  const host = $('#noteHistory');
+  if (!tree.history.length) {
+    host.innerHTML = '<p class="empty-note">No notes yet.</p>';
+    return;
+  }
+  host.innerHTML = tree.history.slice().reverse().map(n =>
+    '<div class="entry">'
+    + '<div class="when">' + esc(fmtDate(n.createdAt))
+    + (n.category ? ' · ' + esc(n.category) : '') + '</div>'
+    + '<div class="body">' + esc(n.text) + '</div>'
+    + '</div>'
+  ).join('');
+}
+
+/* -------- Tree list --------------------------------------------------------- */
+
+function renderTreeList() {
+  const query = $('#treeSearch').value.trim().toLowerCase();
+  const sort = $('#treeSort').value;
+
+  let rows = state.trees.map(t => ({ tree: t, obs: latestObservation(t) }));
+
+  if (query) {
+    rows = rows.filter(r => {
+      const o = r.obs;
+      const haystack = [
+        r.tree.treeId, r.tree.species, r.tree.botanical, r.tree.status,
+        o && o.condition, o && o.priority,
+        o && o.defects && o.defects.join(' '),
+        o && o.recommendations && o.recommendations.join(' '),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.indexOf(query) >= 0;
+    });
+  }
+
+  const byId = (a, b) => String(a.tree.treeId).localeCompare(String(b.tree.treeId), undefined, { numeric: true });
+  const sorters = {
+    id: byId,
+    priority: (a, b) => (PRIORITIES.indexOf(b.obs && b.obs.priority) - PRIORITIES.indexOf(a.obs && a.obs.priority)) || byId(a, b),
+    condition: (a, b) => (conditionMeta(b.obs && b.obs.condition).rank - conditionMeta(a.obs && a.obs.condition).rank) || byId(a, b),
+    dbh: (a, b) => ((b.obs && b.obs.dbhIn) || 0) - ((a.obs && a.obs.dbhIn) || 0) || byId(a, b),
+    species: (a, b) => String(a.tree.species).localeCompare(String(b.tree.species)) || byId(a, b),
+  };
+  rows.sort(sorters[sort] || byId);
+
+  $('#treeList').innerHTML = rows.length ? rows.map(r => {
+    const t = r.tree, o = r.obs;
+    const cond = conditionMeta(o && o.condition);
+    const bits = [
+      t.species || 'Species not set',
+      o && o.dbhIn != null ? o.dbhIn + '" DBH' : null,
+      o && o.priority && o.priority !== 'Not set' ? o.priority : null,
+      t.photos.length ? t.photos.length + ' photo' + (t.photos.length > 1 ? 's' : '') : null,
+    ].filter(Boolean);
+
+    return '<div class="list-item ' + cond.cls
+      + (selection && selection.uid === t.uid ? ' selected' : '') + '" data-tree="' + esc(t.uid) + '">'
+      + '<span class="dot"></span>'
+      + '<span class="lead">' + esc(t.treeId) + '</span>'
+      + '<span class="meta">' + esc(bits.join(' · ')) + '</span>'
+      + '</div>';
+  }).join('') : '<div class="list-item" style="cursor:default"><span class="meta">No trees match.</span></div>';
+
+  $('#treeCount').textContent = rows.length + ' of ' + state.trees.length + ' trees shown';
+}
+
+/* -------- Visits ------------------------------------------------------------ */
+
+function renderVisitPanel() {
+  const sel = $('#activeVisit');
+  const visits = state.visits.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  sel.innerHTML = visits.map(v =>
+    '<option value="' + esc(v.id) + '">' + esc(fmtDate(v.date))
+    + (v.label ? ' — ' + esc(v.label) : '') + '</option>'
+  ).join('');
+  sel.value = state.activeVisitId;
+
+  const v = activeVisit();
+  if (v) {
+    setValue($('#vDate'), v.date);
+    setValue($('#vAssessor'), v.assessor);
+    setValue($('#vWeather'), v.weather);
+    setValue($('#vNotes'), v.notes);
+  }
+  $('#btnDeleteVisit').disabled = state.visits.length <= 1;
+
+  $('#visitList').innerHTML = visits.slice().reverse().map(vv => {
+    const n = state.trees.reduce((c, t) => c + (t.observations.some(o => o.visitId === vv.id) ? 1 : 0), 0);
+    return '<div class="list-item' + (vv.id === state.activeVisitId ? ' selected' : '') + '"'
+      + ' data-visit="' + esc(vv.id) + '">'
+      + '<span class="lead">' + esc(fmtDate(vv.date)) + '</span>'
+      + '<span class="meta">' + esc(vv.label || 'Visit') + ' · ' + n + ' tree'
+      + (n === 1 ? '' : 's') + ' assessed</span></div>';
+  }).join('');
+}
+
+/* -------- Project ----------------------------------------------------------- */
+
+function renderProjectPanel() {
+  setValue($('#pName'), state.project.name);
+  setValue($('#pAddress'), state.project.address);
+  setValue($('#pClient'), state.project.client);
+  setValue($('#pArborist'), state.project.arborist);
+  setValue($('#pNotes'), state.project.notes);
+  setValue($('#pOpacity'), state.background.opacity);
+
+  const fpu = feetPerVbUnit();
+  $('#scaleStatus').innerHTML = fpu
+    ? 'Calibrated: <b>' + fmtDistance(state.scale.calibration.realFeet)
+      + '</b> reference. Canopy circles and measurements are live.'
+    : '<b>Not calibrated.</b> Canopy circles and distances stay hidden until you set a scale.';
+  $('#btnClearScale').disabled = !fpu;
+
+  renderSummary();
+  renderStorageStatus();
+  renderPwaStatus();
+}
+
+function renderSummary() {
+  const counts = {};
+  CONDITIONS.forEach(c => { counts[c.value] = 0; });
+  let needsWork = 0;
+
+  state.trees.forEach(t => {
+    const o = latestObservation(t);
+    const cond = (o && o.condition) || 'Unassessed';
+    counts[cond] = (counts[cond] || 0) + 1;
+    if (o && ['Within 12 months', 'High priority', 'Immediate'].indexOf(o.priority) >= 0) needsWork++;
+  });
+
+  $('#summaryStats').innerHTML = [
+    ['Trees', state.trees.length],
+    ['Good', counts['Good']],
+    ['Fair', counts['Fair']],
+    ['Poor', counts['Poor'] + counts['Dead / hazard']],
+    ['Needs work', needsWork],
+    ['Photos', Photos.count()],
+  ].map(s => '<div class="stat"><div class="n">' + s[1] + '</div><div class="k">' + s[0] + '</div></div>').join('');
+
+  /* Species mix, most common first. */
+  const species = {};
+  state.trees.forEach(t => {
+    const key = t.species || 'Unidentified';
+    species[key] = (species[key] || 0) + 1;
+  });
+  const list = Object.keys(species).sort((a, b) => species[b] - species[a]);
+
+  $('#summaryBreakdown').innerHTML = list.length
+    ? '<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:0 0 6px">Species mix</h3>'
+      + list.map(s => '<div class="row" style="justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)">'
+        + '<span>' + esc(s) + '</span><b>' + species[s] + '</b></div>').join('')
+    : '';
+}
+
+function renderStorageStatus() {
+  const bytes = Photos.totalBytes();
+  const parts = [Photos.count() + ' photos, about ' + fmtBytes(bytes) + ' in the package.'];
+
+  if (Store.mode === 'idb') {
+    parts.push('Photos persist in this browser between sessions.');
+  } else {
+    const cause = location.protocol === 'file:'
+      ? 'this page was opened directly as a file, and browsers block persistent '
+        + 'storage on file:// addresses'
+      : 'persistent storage is unavailable here (' + esc(Store.reason || 'blocked') + ')';
+    parts.push('<span class="warn">Photos are held in memory only</span> — ' + cause + '. '
+      + '<b>Save the package before closing the tab</b> or photos will be lost. '
+      + 'Serving the app over https:// fixes this — see Offline &amp; install below.');
+  }
+  $('#storageStatus').innerHTML = parts.join(' ');
+}
+
+/* -------- Status bar --------------------------------------------------------- */
+
+let statusTimer = null;
+
+function setStatus(msg, kind) {
+  const el = $('#statusMsg');
+  el.className = kind || '';
+  el.textContent = msg;
+  clearTimeout(statusTimer);
+  if (kind !== 'err') {
+    statusTimer = setTimeout(() => { el.textContent = defaultStatus(); el.className = ''; }, 6000);
+  }
+}
+
+function defaultStatus() {
+  if (!state.background.dataUrl) return 'Import a plot plan to begin.';
+  if (!hasScale()) return 'Tip: calibrate the plan scale to unlock canopy circles and measurements.';
+  return state.trees.length + ' trees · ' + state.visits.length + ' visit'
+       + (state.visits.length === 1 ? '' : 's');
+}
+
+function renderStatus() {
+  $('#btnUndo').disabled = !undoStack.length;
+  $('#btnRedo').disabled = !redoStack.length;
+  $('#btnDelete').disabled = !selection;
+
+  const save = $('#saveState');
+  if (lastSavedAt) {
+    save.textContent = (dirty ? 'Unsaved changes · last saved ' : 'Saved ')
+      + new Date(lastSavedAt).toLocaleTimeString();
+    save.className = dirty ? 'warn' : 'muted';
+  } else {
+    save.textContent = dirty ? 'Unsaved changes' : 'Not saved yet';
+    save.className = dirty ? 'warn' : 'muted';
+  }
+
+  if (!statusTimer) $('#statusMsg').textContent = defaultStatus();
+}
+/* ============================================================================
+   12. IMPORT / EXPORT / REPORT
+   ========================================================================== */
+
+const MIME_BY_EXT = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  webp: 'image/webp', svg: 'image/svg+xml',
+};
+
+function extForMime(mime) {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/svg+xml') return 'svg';
+  return 'png';
+}
+
+function mimeForName(name) {
+  const ext = String(name).split('.').pop().toLowerCase();
+  return MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
+/** Split a data: URL into raw bytes plus its MIME type. */
+function dataUrlToBytes(dataUrl) {
+  const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!match) throw new Error('Unreadable plan image.');
+  const mime = match[1] || 'application/octet-stream';
+  if (match[2]) {
+    const binary = atob(match[3]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { bytes: bytes, mime: mime };
+  }
+  return { bytes: new TextEncoder().encode(decodeURIComponent(match[3])), mime: mime };
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/* -------- Plan import ------------------------------------------------------- */
+
+async function importPlan(file) {
+  try {
+    const dataUrl = await blobToDataUrl(file);
+    const dims = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = () => reject(new Error('That file could not be read as an image.'));
+      img.src = dataUrl;
+    });
+
+    const before = snapshot();
+    const aspectChanged = state.background.width
+      && Math.abs((state.background.height / state.background.width) - (dims.h / dims.w)) > 0.01;
+
+    state.background.dataUrl = dataUrl;
+    state.background.width  = dims.w;
+    state.background.height = dims.h;
+    state.background.file = 'plan.' + extForMime(file.type || mimeForName(file.name));
+    commit(before);
+    fitToView();
+
+    if (aspectChanged && state.scale.calibration) {
+      setStatus('Plan replaced, but its proportions differ from the old one — '
+        + 're-check the scale calibration.', 'err');
+    } else if (dims.w < 1200) {
+      setStatus('Plan imported (' + dims.w + '×' + dims.h + '). It is fairly low resolution — '
+        + 'a 300 DPI rescan will stay sharper when you zoom in to place trees.');
+    } else {
+      setStatus('Plan imported (' + dims.w + '×' + dims.h + ').');
+    }
+  } catch (err) {
+    setStatus(err.message || 'Could not import that plan.', 'err');
+  }
+}
+
+/* -------- Save package (ZIP) ------------------------------------------------ */
+
+async function savePackage() {
+  try {
+    setStatus('Building package…');
+    const clone = JSON.parse(snapshot());
+    const entries = [];
+
+    if (state.background.dataUrl) {
+      const parsed = dataUrlToBytes(state.background.dataUrl);
+      const name = 'plan.' + extForMime(parsed.mime);
+      clone.background.file = name;
+      /* SVG is text and compresses well; raster formats are already compressed. */
+      entries.push({ name: name, data: parsed.bytes, compress: parsed.mime === 'image/svg+xml' });
+    }
+    delete clone.background.dataUrl;      // the bytes live in the archive, not the JSON
+
+    let missing = 0, marked = 0;
+    for (const tree of state.trees) {
+      for (const photo of tree.photos) {
+        const blob = await Store.get(Photos.key(photo.id));
+        if (blob) entries.push({ name: photo.file, data: blob, compress: false });
+        else missing++;
+
+        /* Marks are stored as vectors so they stay editable, but anyone browsing the
+           ZIP in Explorer would not see them — so ship a flattened copy alongside. */
+        if (Annot.count(photo)) {
+          try {
+            const flat = await Annot.flatten(photo);
+            if (flat) {
+              entries.push({
+                name: photo.file.replace(/\.jpg$/i, '-marked.jpg'),
+                data: flat, compress: false,
+              });
+              marked++;
+            }
+          } catch (err) {
+            console.warn('Could not flatten annotations for photo', photo.id, err);
+          }
+        }
+      }
+    }
+
+    entries.unshift({ name: 'project.json', data: JSON.stringify(clone, null, 2), compress: true });
+    entries.push({ name: 'README.txt', data: packageReadme(), compress: true });
+
+    const blob = await ZIP.write(entries);
+    const filename = slug(state.project.name) + '-' + todayIso() + '.zip';
+    downloadBlob(blob, filename);
+
+    dirty = false;
+    lastSavedAt = nowIso();
+    renderStatus();
+    setStatus('Saved ' + filename + ' (' + fmtBytes(blob.size) + ')'
+      + (marked ? ', including ' + marked + ' marked-up photo' + (marked === 1 ? '' : 's') : '')
+      + (missing ? ' — warning: ' + missing + ' photo(s) could not be found.' : ''),
+      missing ? 'err' : '');
+  } catch (err) {
+    console.error(err);
+    setStatus('Could not build the package: ' + (err.message || err), 'err');
+  }
+}
+
+function packageReadme() {
+  return [
+    'ARBORIST ASSISTANT — PROJECT PACKAGE',
+    '',
+    'Property : ' + (state.project.name || '(unnamed)'),
+    'Address  : ' + (state.project.address || '—'),
+    'Exported : ' + new Date().toLocaleString(),
+    'Trees    : ' + state.trees.length,
+    'Photos   : ' + Photos.count(),
+    'Visits   : ' + state.visits.length,
+    '',
+    'CONTENTS',
+    '  project.json   All tree data, observations, visits, and layout geometry.',
+    '  plan.*         The plot plan survey image used as the base layer.',
+    '  photos/        Tree photos, one folder per tree, named by photo id.',
+    '                 A "-marked.jpg" copy sits beside any photo that has cut lines or',
+    '                 other marks drawn on it, so they are visible without the app.',
+    '',
+    'This is an ordinary ZIP file. You can open it in Windows Explorer, macOS Finder,',
+    'or any unzip tool to browse the photos directly without the app.',
+    '',
+    'PRIVACY: photos may carry GPS coordinates from the camera, and project.json records',
+    'them. Bear that in mind before sending this package to anyone outside the job.',
+    '',
+    'To continue working, open this .zip with the Arborist Assistant HTML file.',
+    '',
+  ].join('\n');
+}
+
+/* -------- Open (ZIP or JSON) ------------------------------------------------ */
+
+async function openProjectFile(file) {
+  try {
+    setStatus('Opening ' + file.name + '…');
+    const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
+    if (isZip) await openZip(file);
+    else await openJson(file);
+
+    selection = null;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    dirty = false;
+    lastSavedAt = null;
+    render();
+    fitToView();
+    setStatus('Opened ' + esc(state.project.name) + ' — ' + state.trees.length
+      + ' trees, ' + Photos.count() + ' photos.');
+  } catch (err) {
+    console.error(err);
+    setStatus('Could not open that file: ' + (err.message || err), 'err');
+  }
+}
+
+async function openZip(file) {
+  const files = await ZIP.read(file);
+  const jsonBytes = files.get('project.json');
+  if (!jsonBytes) throw new Error('No project.json inside that ZIP.');
+
+  const next = migrate(JSON.parse(new TextDecoder().decode(jsonBytes)));
+
+  /* Restore the plan image from the archive. */
+  const planName = next.background && next.background.file;
+  if (planName && files.has(planName)) {
+    const blob = new Blob([files.get(planName)], { type: mimeForName(planName) });
+    next.background.dataUrl = await blobToDataUrl(blob);
+  }
+
+  /* Photos replace whatever was in storage; thumbnails are rebuilt rather than
+     shipped, which keeps the package smaller and self-consistent. */
+  await Store.clear();
+  let restored = 0;
+  for (const tree of next.trees) {
+    for (const photo of tree.photos) {
+      const bytes = files.get(photo.file);
+      if (!bytes) continue;
+      const blob = new Blob([bytes], { type: 'image/jpeg' });
+      await Store.put(Photos.key(photo.id), blob);
+      try {
+        const thumb = await Photos.resize(blob, THUMB_MAX_EDGE, THUMB_QUALITY);
+        await Store.put(Photos.thumbKey(photo.id), thumb.blob);
+      } catch (e) { /* thumbnail is an optimisation, not a requirement */ }
+      restored++;
+    }
+  }
+  state = next;
+  if (restored) setStatus('Restored ' + restored + ' photos.');
+}
+
+async function openJson(file) {
+  const text = await file.text();
+  const next = migrate(JSON.parse(text));
+  await Store.clear();
+  /* A bare JSON project carries no photo bytes; drop dangling references so the
+     UI does not promise photos it cannot show. */
+  let dropped = 0;
+  next.trees.forEach(t => { dropped += t.photos.length; t.photos = []; });
+  state = next;
+  if (dropped) {
+    setStatus('Opened, but ' + dropped + ' photo reference(s) were dropped — '
+      + 'JSON files do not carry photo data. Use a .zip package to keep photos.', 'err');
+  }
+}
+
+/* -------- CSV --------------------------------------------------------------- */
+
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportCsv() {
+  const headers = ['Tree ID', 'Species', 'Botanical', 'Status', 'Protected', 'DBH (in)',
+    'Height (ft)', 'Spread (ft)', 'Condition', 'Priority', 'Defects', 'Recommended work',
+    'Last assessed', 'Photos', 'Marked photos', 'Latitude', 'Longitude', 'GPS spread (m)',
+    'Notes', 'X', 'Y'];
+
+  const rows = state.trees.slice()
+    .sort((a, b) => String(a.treeId).localeCompare(String(b.treeId), undefined, { numeric: true }))
+    .map(t => {
+      const o = latestObservation(t) || {};
+      const loc = treeLocation(t);
+      return [
+        t.treeId, t.species, t.botanical, t.status, t.protected ? 'Yes' : 'No',
+        o.dbhIn, o.heightFt, o.spreadFt, o.condition, o.priority,
+        (o.defects || []).join('; '), (o.recommendations || []).join('; '),
+        o.date || '', t.photos.length,
+        t.photos.reduce((n, p) => n + (Annot.count(p) ? 1 : 0), 0),
+        loc ? loc.lat.toFixed(6) : '', loc ? loc.lon.toFixed(6) : '',
+        loc && loc.samples > 1 ? loc.spreadM : '',
+        t.history.map(h => h.text).join(' | '),
+        t.x.toFixed(5), t.y.toFixed(5),
+      ].map(csvCell).join(',');
+    });
+
+  /* BOM so Excel reads UTF-8 correctly. */
+  const csv = '﻿' + [headers.map(csvCell).join(',')].concat(rows).join('\r\n');
+  downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+    slug(state.project.name) + '-trees-' + todayIso() + '.csv');
+  setStatus('Exported ' + rows.length + ' trees to CSV.');
+}
+
+/* -------- Print report ------------------------------------------------------ */
+
+function buildPrintReport() {
+  const p = state.project;
+  const meta = [
+    ['Property', p.name], ['Address', p.address], ['Client', p.client],
+    ['Arborist', p.arborist], ['Report date', fmtDate(todayIso())],
+    ['Trees inventoried', state.trees.length],
+  ].filter(r => r[1] !== '' && r[1] != null);
+
+  const rows = state.trees.slice()
+    .sort((a, b) => String(a.treeId).localeCompare(String(b.treeId), undefined, { numeric: true }))
+    .map(t => {
+      const o = latestObservation(t) || {};
+      return '<tr>'
+        + '<td>' + esc(t.treeId) + '</td>'
+        + '<td>' + esc(t.species || '—') + (t.protected ? '<br><i>protected</i>' : '') + '</td>'
+        + '<td>' + (o.dbhIn != null ? esc(o.dbhIn) : '—') + '</td>'
+        + '<td>' + (o.heightFt != null ? esc(o.heightFt) : '—') + '</td>'
+        + '<td>' + (o.spreadFt != null ? esc(o.spreadFt) : '—') + '</td>'
+        + '<td>' + esc(o.condition || 'Unassessed') + '</td>'
+        + '<td>' + esc(o.priority || 'Not set') + '</td>'
+        + '<td>' + esc((o.recommendations || []).join(', ') || '—') + '</td>'
+        + '<td>' + esc((o.defects || []).join(', ') || '—') + '</td>'
+        + '</tr>';
+    }).join('');
+
+  $('#print-report').innerHTML =
+      '<h2>' + esc(p.name || 'Tree Inventory') + '</h2>'
+    + '<table style="margin-bottom:14px;width:auto">'
+    + meta.map(r => '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>').join('')
+    + '</table>'
+    + '<h2>Tree schedule</h2>'
+    + '<table><thead><tr>'
+    + ['ID', 'Species', 'DBH (in)', 'Ht (ft)', 'Spread (ft)', 'Condition', 'Priority',
+       'Recommended work', 'Defects'].map(h => '<th>' + h + '</th>').join('')
+    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="9">No trees recorded.</td></tr>')
+    + '</tbody></table>';
+}
+
+/* ============================================================================
+   13. OFFLINE & INSTALL (PWA)
+
+   Worth being precise about which piece does what, because they are usually
+   conflated:
+
+     service worker  → makes the app work with NO connectivity. Sufficient on its
+                       own, in an ordinary browser tab. Requires a secure origin
+                       (https:// or localhost) — a LAN address like
+                       http://192.168.x.x does NOT qualify and will not register.
+     manifest        → makes the app INSTALLABLE (home-screen icon, standalone
+                       window). Does not affect offline behaviour.
+     storage.persist → asks the browser not to evict our data under pressure.
+                       Granted far more readily to installed apps. This is the
+                       part that actually protects a day of fieldwork, and it is
+                       the strongest practical reason to install rather than just
+                       bookmark — especially on iOS, where ordinary sites can lose
+                       script-writable storage after ~7 days of non-use.
+
+   None of this applies when the file is opened by double-click (file://), where
+   there is no secure context and no persistent storage at all.
+   ========================================================================== */
+
+let deferredInstallPrompt = null;
+let swRegistration = null;
+let swUpdateReady = false;
+let storagePersisted = null;         // null = unknown / unsupported
+
+const isStandalone = () =>
+  (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+  || window.navigator.standalone === true;
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  try {
+    swRegistration = await navigator.serviceWorker.register('sw.js', { scope: './' });
+
+    swRegistration.addEventListener('updatefound', () => {
+      const incoming = swRegistration.installing;
+      if (!incoming) return;
+      incoming.addEventListener('statechange', () => {
+        /* A new build finished installing while an old one is still controlling
+           the page. Offer the reload rather than swapping under the user's feet
+           mid-survey. */
+        if (incoming.state === 'installed' && navigator.serviceWorker.controller) {
+          swUpdateReady = true;
+          renderSidebar();
+        }
+      });
+    });
+    /* The worker also reports when the cached PAGE changed, which covers deploys
+       that touch only the HTML and therefore never restart the worker itself. */
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data && event.data.type === 'content-updated') {
+        swUpdateReady = true;
+        renderSidebar();
+      }
+    });
+  } catch (err) {
+    console.warn('[app] service worker registration failed:', err);
+  }
+}
+
+async function refreshPersistence() {
+  try {
+    if (navigator.storage && navigator.storage.persisted) {
+      storagePersisted = await navigator.storage.persisted();
+    }
+  } catch (e) { storagePersisted = null; }
+}
+
+async function requestPersistence() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) {
+      setStatus('This browser does not support permanent storage requests.', 'err');
+      return;
+    }
+    const granted = await navigator.storage.persist();
+    storagePersisted = granted;
+    setStatus(granted
+      ? 'Storage is now permanent — the browser will not evict your data to reclaim space.'
+      : 'The browser declined. Installing the app to your home screen usually makes it grant this.',
+      granted ? '' : 'err');
+    renderSidebar();
+  } catch (err) {
+    setStatus('Could not request permanent storage: ' + (err.message || err), 'err');
+  }
+}
+
+function renderPwaStatus() {
+  const host = $('#pwaStatus');
+  if (!host) return;
+
+  const lines = [];
+  const offlineReady = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+
+  if (location.protocol === 'file:') {
+    lines.push('<span class="warn">Running as a local file.</span> Offline caching and '
+      + 'persistent storage both need the app served over https:// (or localhost). '
+      + 'Everything else works normally.');
+  } else if (!window.isSecureContext) {
+    lines.push('<span class="warn">This address is not a secure context</span>, so offline '
+      + 'caching is unavailable. A LAN address such as http://192.168.x.x does not count — '
+      + 'use https:// or localhost.');
+  } else if (offlineReady) {
+    lines.push('<b>Offline ready.</b> The app is cached and will open with no connection.');
+  } else if (swRegistration) {
+    lines.push('Caching the app for offline use — reload once to finish.');
+  } else {
+    lines.push('Offline caching unavailable in this browser.');
+  }
+
+  if (isStandalone()) lines.push('Running as an installed app.');
+
+  if (storagePersisted === true) {
+    lines.push('Storage is <b>permanent</b> and will not be evicted.');
+  } else if (storagePersisted === false) {
+    lines.push('<span class="warn">Storage is best-effort</span> — the browser may evict it '
+      + 'to reclaim space. Installing to your home screen makes permanence much more likely.');
+  }
+
+  host.innerHTML = lines.join(' ');
+
+  $('#btnInstall').hidden    = !deferredInstallPrompt;
+  $('#btnPersist').hidden    = !(navigator.storage && navigator.storage.persist)
+                               || storagePersisted === true
+                               || Store.mode !== 'idb';
+  $('#btnUpdateApp').hidden  = !swUpdateReady;
+}
+
+/* ============================================================================
+   14. EVENT WIRING & BOOTSTRAP
+   ========================================================================== */
+
+function populateSelects() {
+  $('#fCondition').innerHTML = CONDITIONS.map(c =>
+    '<option value="' + esc(c.value) + '">' + esc(c.value) + '</option>').join('');
+  $('#fPriority').innerHTML = PRIORITIES.map(p =>
+    '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+  $('#speciesList').innerHTML = SPECIES.map(s =>
+    '<option value="' + esc(s[0]) + '">' + esc(s[1]) + '</option>').join('');
+}
+
+/** Mutate the active visit's observation for the selected tree, creating it on demand. */
+function editObservation(mutator) {
+  const tree = selectedTree();
+  if (!tree) return;
+  const before = snapshot();
+  const obs = observationForActiveVisit(tree, true);
+  mutator(obs);
+  tree.modifiedAt = nowIso();
+  commit(before);
+}
+
+/** Mutate the selected tree's own identity fields. */
+function editTree(mutator) {
+  const tree = selectedTree();
+  if (!tree) return;
+  const before = snapshot();
+  mutator(tree);
+  tree.modifiedAt = nowIso();
+  commit(before);
+}
+
+function wireEvents() {
+  /* --- tools --- */
+  $('#toolSelect').onclick  = () => setTool('select');
+  $('#toolTree').onclick    = () => setTool('tree');
+  $('#toolBox').onclick     = () => setTool('box');
+  $('#toolScale').onclick   = () => setTool('scale');
+  $('#toolMeasure').onclick = () => setTool('measure');
+
+  $('#btnUndo').onclick   = undo;
+  $('#btnRedo').onclick   = redo;
+  $('#btnDelete').onclick = deleteSelected;
+
+  /* --- view --- */
+  $('#btnZoomIn').onclick  = () => zoomCentre(1.25);
+  $('#btnZoomOut').onclick = () => zoomCentre(1 / 1.25);
+  $('#btnFit').onclick     = fitToView;
+
+  const view = $('#view');
+  view.addEventListener('pointerdown', onPointerDown);
+  view.addEventListener('pointermove', onPointerMove);
+  view.addEventListener('pointerup', onPointerUp);
+  view.addEventListener('pointercancel', onPointerUp);
+  view.addEventListener('wheel', onWheel, { passive: false });
+  document.addEventListener('keydown', onKeyDown);
+
+  /* --- layers --- */
+  [['layerPlan', 'plan'], ['layerCanopy', 'canopy'], ['layerTrees', 'trees'],
+   ['layerStructures', 'structures'], ['layerLabels', 'labels']]
+    .forEach(([id, key]) => {
+      $('#' + id).onchange = e => { state.layers[key] = e.target.checked; render(); };
+    });
+
+  /* --- files --- */
+  $('#filePlan').onchange = e => {
+    if (e.target.files[0]) importPlan(e.target.files[0]);
+    e.target.value = '';
+  };
+  $('#fileOpen').onchange = e => {
+    if (e.target.files[0]) openProjectFile(e.target.files[0]);
+    e.target.value = '';
+  };
+  $('#btnSaveZip').onclick   = savePackage;
+  $('#btnExportCsv').onclick = exportCsv;
+  $('#btnPrint').onclick     = () => { buildPrintReport(); setTimeout(() => window.print(), 60); };
+
+  /* --- tabs --- */
+  TABS.forEach(t => { $('#tab' + t).onclick = () => showTab(t); });
+
+  /* --- tree identity --- */
+  $('#fTreeId').onchange = e => {
+    const tree = selectedTree(); if (!tree) return;
+    const value = e.target.value.trim();
+    if (!value) { setStatus('Tree ID cannot be blank.', 'err'); renderSidebar(); return; }
+    if (state.trees.some(t => t !== tree && t.treeId === value)) {
+      setStatus('Tree ID "' + value + '" is already used.', 'err');
+      renderSidebar();
+      return;
+    }
+    editTree(t => { t.treeId = value; });
+  };
+  $('#fSpecies').onchange = e => {
+    const value = e.target.value;
+    editTree(t => {
+      t.species = value;
+      /* Fill the botanical name from the suggestion list, but never overwrite one
+         the user typed themselves. */
+      const match = SPECIES.find(s => s[0].toLowerCase() === value.toLowerCase());
+      if (match && !t.botanical) t.botanical = match[1];
+    });
+  };
+  $('#fBotanical').onchange = e => { const v = e.target.value; editTree(t => { t.botanical = v; }); };
+  $('#fStatus').onchange    = e => { const v = e.target.value; editTree(t => { t.status = v; }); };
+  $('#fProtected').onchange = e => { const v = e.target.checked; editTree(t => { t.protected = v; }); };
+
+  /* --- observation fields --- */
+  $('#fDbh').onchange       = e => { const v = numOrNull(e.target.value); editObservation(o => { o.dbhIn = v; }); };
+  $('#fHeight').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.heightFt = v; }); };
+  $('#fSpread').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.spreadFt = v; }); };
+  $('#fCondition').onchange = e => { const v = e.target.value; editObservation(o => { o.condition = v; }); };
+  $('#fPriority').onchange  = e => { const v = e.target.value; editObservation(o => { o.priority = v; }); };
+  $('#fObsNotes').onchange  = e => { const v = e.target.value; editObservation(o => { o.notes = v; }); };
+
+  const chipHandler = field => e => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const value = chip.getAttribute('data-value');
+    editObservation(o => {
+      const list = o[field] || (o[field] = []);
+      const i = list.indexOf(value);
+      if (i >= 0) list.splice(i, 1); else list.push(value);
+    });
+  };
+  $('#fDefects').addEventListener('click', chipHandler('defects'));
+  $('#fRecommendations').addEventListener('click', chipHandler('recommendations'));
+
+  /* --- notes --- */
+  $('#btnAddNote').onclick = () => {
+    const tree = selectedTree(); if (!tree) return;
+    const box = $('#fNewNote');
+    const text = box.value.trim();
+    if (!text) return;
+    const before = snapshot();
+    tree.history.push({ id: uid(), createdAt: nowIso(), text: text, category: 'Arborist' });
+    tree.events.push({ timestamp: nowIso(), type: 'note_added', details: {} });
+    tree.modifiedAt = nowIso();
+    box.value = '';
+    commit(before);
+  };
+
+  /* --- photos --- */
+  const onPhotos = async e => {
+    const tree = selectedTree();
+    /* Copy out of the live FileList BEFORE resetting the input — clearing `value`
+       empties the list in place, so a retained reference would come back empty.
+       (Resetting is what lets you pick the same file twice in a row.) */
+    const files = Array.from(e.target.files);
+    e.target.value = '';
+    if (!tree || !files.length) return;
+    setStatus('Processing ' + files.length + ' photo(s)…');
+    const before = snapshot();
+    const added = await Photos.add(tree, files);
+    if (added) {
+      commit(before);
+      setStatus('Added ' + added + ' photo(s)'
+        + (Store.mode === 'memory' ? ' — remember to save the package before closing.' : '.'));
+    }
+  };
+  $('#filePhotoCamera').onchange  = onPhotos;
+  $('#filePhotoLibrary').onchange = onPhotos;
+
+  $('#photoGrid').addEventListener('click', async e => {
+    const tree = selectedTree(); if (!tree) return;
+    const removeBtn = e.target.closest('[data-remove]');
+    if (removeBtn) {
+      e.stopPropagation();
+      if (!confirm('Remove this photo from tree ' + tree.treeId + '?')) return;
+      const before = snapshot();
+      Photos.remove(tree, removeBtn.getAttribute('data-remove'));
+      commit(before);
+      return;
+    }
+    const cell = e.target.closest('[data-photo]');
+    if (cell) openLightbox(tree, cell.getAttribute('data-photo'));
+  });
+  $('#lightboxClose').onclick = () => $('#lightbox').close();
+  $('#lightbox').addEventListener('close', () => { annotTarget = null; annotDraft = null; });
+
+  $('#lightboxCaption').onchange = e => {
+    const photo = currentAnnotPhoto();
+    if (!photo) return;
+    const before = snapshot();
+    photo.caption = e.target.value;
+    commit(before);
+  };
+
+  /* --- drawing on a photo --- */
+  $('#annotToolRow').addEventListener('click', e => {
+    const btn = e.target.closest('[data-tool]');
+    if (!btn) return;
+    annotTool = btn.getAttribute('data-tool');
+    renderAnnotToolbar();
+  });
+  $('#annotColorRow').addEventListener('click', e => {
+    const btn = e.target.closest('[data-color]');
+    if (!btn) return;
+    annotColor = btn.getAttribute('data-color');
+    renderAnnotToolbar();
+  });
+
+  const layer = $('#annotLayer');
+
+  /** Pointer position as a fraction of the photo, so marks survive any display size. */
+  const annotPoint = evt => {
+    const r = layer.getBoundingClientRect();
+    return {
+      x: Math.round(clamp((evt.clientX - r.left) / r.width, 0, 1) * 10000) / 10000,
+      y: Math.round(clamp((evt.clientY - r.top) / r.height, 0, 1) * 10000) / 10000,
+    };
+  };
+
+  layer.addEventListener('pointerdown', e => {
+    if (!currentAnnotPhoto()) return;
+    e.preventDefault();
+    try { layer.setPointerCapture(e.pointerId); } catch (err) { /* non-fatal */ }
+    const p = annotPoint(e);
+    annotDraft = {
+      id: uid(), type: annotTool, color: annotColor, width: Annot.DEFAULT_WIDTH,
+      points: annotTool === 'free' ? [p] : [p, p],
+    };
+    renderAnnotations();
+  });
+
+  layer.addEventListener('pointermove', e => {
+    if (!annotDraft) return;
+    e.preventDefault();
+    const p = annotPoint(e);
+    if (annotDraft.type === 'free') {
+      /* Thin the stream a little — raw pointermove would store hundreds of
+         near-identical points and bloat the project file. */
+      const last = annotDraft.points[annotDraft.points.length - 1];
+      if (Math.hypot(p.x - last.x, p.y - last.y) > 0.004) annotDraft.points.push(p);
+    } else {
+      annotDraft.points[1] = p;
+    }
+    renderAnnotations();
+  });
+
+  const finishAnnotation = e => {
+    if (!annotDraft) return;
+    const draft = annotDraft;
+    annotDraft = null;
+
+    const photo = currentAnnotPhoto();
+    /* Discard accidental taps: a mark has to actually go somewhere. */
+    const meaningful = draft.type === 'free'
+      ? draft.points.length > 2
+      : Math.hypot(draft.points[1].x - draft.points[0].x,
+                   draft.points[1].y - draft.points[0].y) > 0.02;
+
+    if (!photo || !meaningful) { renderAnnotations(); return; }
+
+    const before = snapshot();
+    if (!Array.isArray(photo.annotations)) photo.annotations = [];
+    photo.annotations.push(draft);
+    const tree = treeByUid(annotTarget.treeUid);
+    if (tree) tree.modifiedAt = nowIso();
+    commit(before);
+    renderAnnotations();
+  };
+  layer.addEventListener('pointerup', finishAnnotation);
+  layer.addEventListener('pointercancel', finishAnnotation);
+
+  $('#annotUndo').onclick = () => {
+    const photo = currentAnnotPhoto();
+    if (!photo || !(photo.annotations || []).length) return;
+    const before = snapshot();
+    photo.annotations.pop();
+    commit(before);
+    renderAnnotations();
+  };
+  $('#annotClear').onclick = () => {
+    const photo = currentAnnotPhoto();
+    if (!photo || !(photo.annotations || []).length) return;
+    if (!confirm('Remove all ' + photo.annotations.length + ' marks from this photo?')) return;
+    const before = snapshot();
+    photo.annotations = [];
+    commit(before);
+    renderAnnotations();
+  };
+
+  $('#btnCopyCoords').onclick = async () => {
+    const tree = selectedTree();
+    const loc = tree && treeLocation(tree);
+    if (!loc) return;
+    const text = loc.lat.toFixed(6) + ', ' + loc.lon.toFixed(6);
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus('Copied ' + text);
+    } catch (err) {
+      /* Clipboard needs a secure context; show the value so it can be copied by hand. */
+      setStatus('Coordinates: ' + text);
+    }
+  };
+
+  /* --- tree list --- */
+  $('#treeSearch').oninput = debounce(renderTreeList, 120);
+  $('#treeSort').onchange  = renderTreeList;
+  $('#treeList').addEventListener('click', e => {
+    const row = e.target.closest('[data-tree]');
+    if (row) select('tree', row.getAttribute('data-tree'));
+  });
+
+  /* --- visits --- */
+  $('#activeVisit').onchange = e => {
+    state.activeVisitId = e.target.value;
+    render();
+  };
+  $('#btnNewVisit').onclick = () => {
+    const before = snapshot();
+    const v = newVisit('');
+    const previous = activeVisit();
+    if (previous) v.assessor = previous.assessor;      // same arborist, most of the time
+    state.visits.push(v);
+    state.activeVisitId = v.id;
+    commit(before);
+    setStatus('New visit started for ' + fmtDate(v.date)
+      + '. Measurements you record now are filed under it.');
+  };
+  $('#btnDeleteVisit').onclick = () => {
+    if (state.visits.length <= 1) return;
+    const v = activeVisit();
+    const count = state.trees.reduce((n, t) => n + t.observations.filter(o => o.visitId === v.id).length, 0);
+    if (!confirm('Delete the visit of ' + fmtDate(v.date) + '?'
+      + (count ? '\n\nThis also deletes ' + count + ' observation(s) recorded during it.' : ''))) return;
+    const before = snapshot();
+    state.visits = state.visits.filter(x => x.id !== v.id);
+    state.trees.forEach(t => { t.observations = t.observations.filter(o => o.visitId !== v.id); });
+    state.activeVisitId = state.visits[state.visits.length - 1].id;
+    commit(before);
+  };
+  const visitField = (id, key) => {
+    $('#' + id).onchange = e => {
+      const before = snapshot();
+      const v = activeVisit();
+      if (v) v[key] = e.target.value;
+      commit(before);
+    };
+  };
+  visitField('vDate', 'date');
+  visitField('vAssessor', 'assessor');
+  visitField('vWeather', 'weather');
+  visitField('vNotes', 'notes');
+  $('#visitList').addEventListener('click', e => {
+    const row = e.target.closest('[data-visit]');
+    if (row) { state.activeVisitId = row.getAttribute('data-visit'); render(); }
+  });
+
+  /* --- structure --- */
+  const structField = (id, key, transform) => {
+    $('#' + id).oninput = e => {
+      const s = selectedStructure(); if (!s) return;
+      const before = snapshot();
+      s[key] = transform ? transform(e.target.value) : e.target.value;
+      s.modifiedAt = nowIso();
+      commit(before);
+    };
+  };
+  structField('sLabel', 'label');
+  structField('sKind', 'kind');
+  structField('sNotes', 'notes');
+  structField('sOpacity', 'opacity', v => Number(v) / 100);
+
+  /* --- project --- */
+  const projField = (id, key) => {
+    $('#' + id).onchange = e => {
+      const before = snapshot();
+      state.project[key] = e.target.value;
+      commit(before);
+    };
+  };
+  projField('pName', 'name');
+  projField('pAddress', 'address');
+  projField('pClient', 'client');
+  projField('pArborist', 'arborist');
+  projField('pNotes', 'notes');
+
+  $('#pOpacity').oninput = e => {
+    state.background.opacity = Number(e.target.value);
+    dirty = true;
+    render();                                  // transient: not worth an undo step
+  };
+
+  /* --- scale --- */
+  $('#btnScaleTool').onclick = () => { showTab('Project'); setTool('scale'); };
+  $('#btnClearScale').onclick = () => {
+    const before = snapshot();
+    state.scale.calibration = null;
+    commit(before);
+    setStatus('Scale cleared.');
+  };
+  $('#scaleOk').onclick = () => {
+    const raw = numOrNull($('#scaleFeet').value);
+    if (!raw || raw <= 0 || !pendingCalibration) return;
+    const units = $('#scaleUnits').value;
+    const feet = units === 'm' ? raw / M_PER_FT : raw;
+    const before = snapshot();
+    state.scale.calibration = Object.assign({}, pendingCalibration, { realFeet: feet });
+    state.scale.units = units;
+    pendingCalibration = null;
+    clearOverlay();
+    commit(before);
+    setStatus('Scale set. Canopy circles and measurements are now live.');
+  };
+  $('#scaleDialog').addEventListener('close', () => {
+    pendingCalibration = null;
+    clearOverlay();
+  });
+
+  /* --- offline & install --- */
+  window.addEventListener('beforeinstallprompt', e => {
+    /* Suppress the browser's own bar so the offer appears where it makes sense,
+       next to the explanation of what installing actually buys. */
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    renderSidebar();
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    /* Installed apps are granted persistence far more readily — ask now. */
+    refreshPersistence().then(() => {
+      if (storagePersisted === false) requestPersistence();
+      renderSidebar();
+    });
+    setStatus('Installed. Launch it from your home screen to work offline.');
+  });
+
+  $('#btnInstall').onclick = async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    renderSidebar();
+    if (choice && choice.outcome !== 'accepted') {
+      setStatus('Install dismissed. You can still use the app in this tab.');
+    }
+  };
+  $('#btnPersist').onclick = requestPersistence;
+  $('#btnUpdateApp').onclick = () => {
+    if (dirty && !confirm('You have unsaved changes. Reload to update anyway?')) return;
+    if (swRegistration && swRegistration.waiting) swRegistration.waiting.postMessage('skipWaiting');
+    location.reload();
+  };
+
+  /* --- unsaved-work guard --- */
+  window.addEventListener('beforeunload', e => {
+    if (!dirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
+  window.addEventListener('resize', debounce(render, 150));
+}
+
+/**
+ * Offer the recovery snapshot only when this looks like a crash: the app opened
+ * empty, yet an autosave with real content exists. Prompting every reload would
+ * train the user to dismiss it.
+ */
+async function offerRecovery() {
+  try {
+    const rec = await Store.getMeta('recovery');
+    if (!rec || !rec.state) return;
+    const hasContent = (rec.state.trees || []).length || (rec.state.structures || []).length;
+    if (!hasContent) return;
+    if (state.trees.length || state.structures.length) return;
+
+    const when = new Date(rec.savedAt).toLocaleString();
+    if (confirm('An unsaved session from ' + when + ' was found ('
+      + rec.state.trees.length + ' trees).\n\nRestore it?')) {
+      state = migrate(rec.state);
+      setStatus('Recovered your last session. Save a package to make it permanent.');
+    }
+  } catch (e) { /* recovery is best-effort */ }
+}
+
+async function init() {
+  populateSelects();
+  wireEvents();
+
+  const mode = await Store.init();
+  await refreshPersistence();
+  await offerRecovery();
+
+  setTool('select');
+  showTab('Selected');
+  render();
+  requestAnimationFrame(fitToView);
+
+  if (mode === 'memory') {
+    console.warn('Persistent storage unavailable:', Store.reason || 'file:// origin');
+  }
+
+  /* Registered last: it must never delay first paint, and it is optional. */
+  registerServiceWorker();
+}
+
+init();
+
+})();
+</script>
+</body>
+</html>
