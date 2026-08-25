@@ -86,7 +86,9 @@ button:disabled:hover{background:var(--panel)}
 .grow{flex:1}
 
 /* ---- Workspace ---------------------------------------------------------- */
-#view{flex:1; min-height:0; position:relative; overflow:hidden; background:#dfe5df; touch-action:none; cursor:grab}
+/* min-height keeps the map from collapsing to a sliver on a short window — with
+   flex:1 and min-height:0 alone, a wrapped toolbar can eat the entire column. */
+#view{flex:1; min-height:260px; position:relative; overflow:hidden; background:#dfe5df; touch-action:none; cursor:grab}
 #view.panning{cursor:grabbing}
 #view.placing{cursor:crosshair}
 #canvas{position:absolute; transform-origin:0 0; background:#fff; box-shadow:0 2px 14px rgba(0,0,0,.18)}
@@ -123,6 +125,13 @@ button:disabled:hover{background:var(--panel)}
 .cond-hazard{color:var(--hazard)} .cond-unknown{color:var(--unknown)}
 .tree-marker.removed{opacity:.45}
 .tree-marker.removed .tree-dot{stroke-dasharray:3 2}
+
+/* Critical root zones. The quarter ring is filled because it is the no-impact
+   zone — it should read as a keep-out area, not just another outline. */
+.crz-full{fill:none; stroke:#8a6d3b; stroke-width:1.4; stroke-dasharray:7 5; opacity:.75}
+.crz-half{fill:none; stroke:#a8742f; stroke-width:1.4; stroke-dasharray:4 3; opacity:.85}
+.crz-quarter{fill:#c0392b; fill-opacity:.10; stroke:#c0392b; stroke-width:1.4; opacity:.9}
+.crz-quarter.breached{fill-opacity:.28; stroke-width:2.4}
 
 .structure{cursor:pointer}
 .structure rect{fill:var(--blue); stroke:var(--blue); stroke-width:1.5}
@@ -164,7 +173,27 @@ input[type=checkbox]{width:20px; height:20px; min-height:0; accent-color:var(--g
 .inline input[type=checkbox]{flex:none}
 .row{display:flex; gap:7px; align-items:center; flex-wrap:wrap}
 .muted{color:var(--ink-soft); font-size:12.5px}
+.warn{color:#9a5b18; font-weight:600}
+.err{color:var(--hazard); font-weight:600}
 .empty-note{color:var(--ink-soft); font-size:13px; font-style:italic; padding:10px 0}
+
+/* Multi-trunk stem entry */
+#trunkPanel{border:1px solid var(--line); border-radius:8px; padding:9px; background:#fbfcfb; margin-bottom:9px}
+.trunk-row{display:flex; align-items:center; gap:7px; margin-bottom:6px}
+.trunk-row .n{font-size:12px; font-weight:700; color:var(--ink-soft); min-width:52px}
+.trunk-row input{min-height:36px}
+.trunk-row .rm-trunk{min-height:32px; min-width:32px; padding:0; font-size:15px; line-height:1; flex:none}
+.trunk-row.largest .n{color:var(--green)}
+.trunk-row.largest input{border-color:var(--green)}
+
+/* Ordinance status */
+.ord-heritage{background:#e8dff5; color:#4a2d7a}
+.ord-protected{background:#e2f0e5; color:var(--green-dark)}
+.ord-exempt{background:#eceff0; color:#4a5560}
+.ord-none{background:#f0f2f0; color:var(--ink-soft)}
+#ordinanceDetail li{margin-bottom:4px}
+#ordinanceDetail ul{margin:0 0 0 16px; padding:0}
+.verify-note{display:block; margin-top:7px; font-style:italic}
 
 /* Chip multi-select (defects, recommendations) */
 .chips{display:flex; flex-wrap:wrap; gap:5px}
@@ -337,6 +366,7 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
         <span class="row" style="gap:11px">
           <label class="inline" style="margin:0"><input type="checkbox" id="layerPlan" checked> Plan</label>
           <label class="inline" style="margin:0"><input type="checkbox" id="layerCanopy" checked> Canopy</label>
+          <label class="inline" style="margin:0"><input type="checkbox" id="layerRootzones" checked> Root zones</label>
           <label class="inline" style="margin:0"><input type="checkbox" id="layerTrees" checked> Trees</label>
           <label class="inline" style="margin:0"><input type="checkbox" id="layerStructures" checked> Structures</label>
           <label class="inline" style="margin:0"><input type="checkbox" id="layerLabels" checked> Labels</label>
@@ -363,6 +393,7 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
           <img id="plan" alt="Plot plan survey">
           <svg id="svg" xmlns="http://www.w3.org/2000/svg">
             <g id="gStructures"></g>
+            <g id="gCrz"></g>
             <g id="gCanopy"></g>
             <g id="gTrees"></g>
             <g id="gOverlay"></g>
@@ -409,7 +440,13 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
                 <input id="fBotanical" autocomplete="off" placeholder="e.g. Quercus agrifolia">
               </label>
               <label class="inline"><input type="checkbox" id="fProtected">
-                <span>Protected / heritage tree (ordinance applies)</span></label>
+                <span>Flag as protected / heritage (manual override)</span></label>
+            </div>
+
+            <div class="section" id="ordinanceSection" hidden>
+              <h3>Ordinance <span id="ordinanceBadge" class="badge">&mdash;</span></h3>
+              <div id="ordinanceDetail" class="muted"></div>
+              <p id="crzText" class="muted" style="margin:8px 0 0"></p>
             </div>
 
             <div class="section">
@@ -418,14 +455,36 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
                 Measurements are recorded against the active visit, so repeat visits build history automatically.
               </p>
               <div class="grid3">
-                <label class="field"><span>DBH (in)</span>
+                <label class="field"><span>Diameter (in)</span>
                   <input id="fDbh" type="number" step="0.1" min="0" inputmode="decimal"></label>
                 <label class="field"><span>Height (ft)</span>
                   <input id="fHeight" type="number" step="1" min="0" inputmode="numeric"></label>
                 <label class="field"><span>Spread (ft)</span>
                   <input id="fSpread" type="number" step="1" min="0" inputmode="numeric"></label>
               </div>
-              <p class="muted" style="margin:-4px 0 9px">Spread draws the canopy circle to true scale.</p>
+
+              <!-- Measuring aid: the City tells you to run a tape around the trunk. -->
+              <div class="row" style="margin:-2px 0 9px">
+                <span class="muted">Measured around the trunk?</span>
+                <input id="fCirc" type="number" step="0.1" min="0" inputmode="decimal"
+                       placeholder="circumference" style="max-width:130px; min-height:34px">
+                <button id="btnCircToDia" class="btn-sm">&rarr; diameter</button>
+              </div>
+
+              <label class="inline"><input type="checkbox" id="fMultiTrunk">
+                <span>Multi-trunk tree</span></label>
+
+              <div id="trunkPanel" hidden>
+                <p class="muted" id="trunkRuleNote" style="margin:-2px 0 8px"></p>
+                <div id="trunkList"></div>
+                <div class="row" style="margin-top:7px">
+                  <button id="btnAddTrunk" class="btn-sm">+ Add stem</button>
+                  <span class="grow"></span>
+                  <span id="trunkResult" class="badge"></span>
+                </div>
+              </div>
+
+              <p class="muted" style="margin:6px 0 9px">Spread draws the canopy circle to true scale.</p>
               <div class="grid2">
                 <label class="field"><span>Condition</span><select id="fCondition"></select></label>
                 <label class="field"><span>Priority</span><select id="fPriority"></select></label>
@@ -559,6 +618,20 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
               <label class="field"><span>Arborist</span><input id="pArborist" autocomplete="off"></label>
             </div>
             <label class="field"><span>Project notes</span><textarea id="pNotes"></textarea></label>
+          </div>
+
+          <div class="section">
+            <h3>Ordinance</h3>
+            <div class="grid2">
+              <label class="field"><span>Jurisdiction</span><select id="pOrdinance"></select></label>
+              <label class="field"><span>Property type</span>
+                <select id="pPropertyType">
+                  <option value="residential">Residential</option>
+                  <option value="commercial">Commercial / multifamily</option>
+                </select>
+              </label>
+            </div>
+            <div id="ordinanceSummary" class="muted"></div>
           </div>
 
           <div class="section">
@@ -732,8 +805,62 @@ const RECOMMENDATIONS = [
   'Mulch', 'Irrigate', 'Soil treatment', 'Pest treatment', 'Protect during construction',
 ];
 
-/* Suggestions only — the species field always accepts free text. */
+/* Suggestions only — the species field always accepts free text.
+   Central Texas natives lead the list; picking a common name fills the botanical
+   name, which is what drives ordinance classification (genus Quercus -> oak). */
 const SPECIES = [
+  /* --- Central Texas / Austin --- */
+  ['Live oak', 'Quercus virginiana'],
+  ['Escarpment live oak', 'Quercus fusiformis'],
+  ['Post oak', 'Quercus stellata'],
+  ['Texas red oak', 'Quercus buckleyi'],
+  ['Spanish oak', 'Quercus buckleyi'],
+  ['Shumard oak', 'Quercus shumardii'],
+  ['Bur oak', 'Quercus macrocarpa'],
+  ['Chinquapin oak', 'Quercus muehlenbergii'],
+  ['Lacey oak', 'Quercus laceyi'],
+  ['Blackjack oak', 'Quercus marilandica'],
+  ['Monterrey oak', 'Quercus polymorpha'],
+  ['Cedar elm', 'Ulmus crassifolia'],
+  ['Ashe juniper', 'Juniperus ashei'],
+  ['Pecan', 'Carya illinoinensis'],
+  ['Texas ash', 'Fraxinus texensis'],
+  ['Green ash', 'Fraxinus pennsylvanica'],
+  ['Arizona walnut', 'Juglans major'],
+  ['Bald cypress', 'Taxodium distichum'],
+  ['Texas madrone', 'Arbutus xalapensis'],
+  ['Bigtooth maple', 'Acer grandidentatum'],
+  ['American sycamore', 'Platanus occidentalis'],
+  ['Sugar hackberry', 'Celtis laevigata'],
+  ['Netleaf hackberry', 'Celtis reticulata'],
+  ['Texas persimmon', 'Diospyros texana'],
+  ['Texas mountain laurel', 'Dermatophyllum secundiflorum'],
+  ['Mexican plum', 'Prunus mexicana'],
+  ['Escarpment black cherry', 'Prunus serotina var. eximia'],
+  ["Eve's necklace", 'Styphnolobium affine'],
+  ['Yaupon holly', 'Ilex vomitoria'],
+  ['Possumhaw holly', 'Ilex decidua'],
+  ['Texas redbud', 'Cercis canadensis var. texensis'],
+  ['Rusty blackhaw viburnum', 'Viburnum rufidulum'],
+  ['Carolina buckthorn', 'Frangula caroliniana'],
+  ['Western soapberry', 'Sapindus saponaria var. drummondii'],
+  ['Anacua', 'Ehretia anacua'],
+  ['Honey mesquite', 'Prosopis glandulosa'],
+  ['Huisache', 'Vachellia farnesiana'],
+  ['Retama', 'Parkinsonia aculeata'],
+  ['Desert willow', 'Chilopsis linearis'],
+  ['Black willow', 'Salix nigra'],
+  ['Eastern cottonwood', 'Populus deltoides'],
+  ['Red mulberry', 'Morus rubra'],
+  ["Bois d'arc", 'Maclura pomifera'],
+  ['Arizona cypress', 'Cupressus arizonica'],
+  ['Loblolly pine', 'Pinus taeda'],
+  /* Commonly listed as exempt / invasive in Central Texas */
+  ['Chinaberry', 'Melia azedarach'],
+  ['Ligustrum', 'Ligustrum lucidum'],
+  ['Chinese tallow', 'Triadica sebifera'],
+  ['Paper mulberry', 'Broussonetia papyrifera'],
+  /* --- Elsewhere --- */
   ['Coast live oak', 'Quercus agrifolia'],
   ['Valley oak', 'Quercus lobata'],
   ['Blue oak', 'Quercus douglasii'],
@@ -896,12 +1023,13 @@ function blankProject() {
     schemaVersion: SCHEMA_VERSION,
     project: {
       name: 'Untitled property', address: '', client: '', arborist: '', notes: '',
+      ordinance: 'austin', propertyType: 'residential',
       createdAt: nowIso(), modifiedAt: nowIso(),
     },
     background: { file: '', width: 0, height: 0, opacity: 100 },
     scale: { calibration: null, units: 'ft' },
     view: { zoom: 1, panX: 20, panY: 20 },
-    layers: { plan: true, canopy: true, trees: true, structures: true, labels: true },
+    layers: { plan: true, canopy: true, rootzones: true, trees: true, structures: true, labels: true },
     visits: [firstVisit],
     activeVisitId: firstVisit.id,
     trees: [],
@@ -942,6 +1070,10 @@ function newObservation(visitId, date) {
     id: uid(),
     visitId: visitId,
     date: date || todayIso(),
+    /* `trunks` holds individual stem diameters for a multi-trunk tree. When it has
+       more than one entry, dbhIn is DERIVED from it via the ordinance formula and
+       must not be edited directly. */
+    trunks: [],
     dbhIn: null, heightFt: null, spreadFt: null,
     condition: 'Unassessed',
     priority: 'Not set',
@@ -1061,10 +1193,11 @@ function normalizeV3(d) {
   const base = blankProject();
   const out = Object.assign(base, d);
   out.project    = Object.assign(base.project, d.project || {});
+  if (!ORDINANCES[out.project.ordinance]) out.project.ordinance = 'none';
   out.background = Object.assign({ file: '', width: 0, height: 0, opacity: 100 }, d.background || {});
   out.scale      = Object.assign({ calibration: null, units: 'ft' }, d.scale || {});
   out.view       = Object.assign({ zoom: 1, panX: 20, panY: 20 }, d.view || {});
-  out.layers     = Object.assign({ plan: true, canopy: true, trees: true, structures: true, labels: true }, d.layers || {});
+  out.layers     = Object.assign({ plan: true, canopy: true, rootzones: true, trees: true, structures: true, labels: true }, d.layers || {});
   out.visits     = Array.isArray(d.visits) && d.visits.length ? d.visits : [newVisit('Baseline survey')];
   out.trees      = Array.isArray(d.trees) ? d.trees : [];
   out.structures = Array.isArray(d.structures) ? d.structures : [];
@@ -1072,6 +1205,7 @@ function normalizeV3(d) {
   out.trees.forEach(t => {
     t.uid = t.uid || uid();
     t.observations = Array.isArray(t.observations) ? t.observations : [];
+    t.observations.forEach(o => { if (!Array.isArray(o.trunks)) o.trunks = []; });
     t.photos  = Array.isArray(t.photos)  ? t.photos  : [];
     /* Photos from packages written before annotations/EXIF existed. */
     t.photos.forEach(p => {
@@ -1104,6 +1238,210 @@ function renumberIfNeeded(p) {
     seen.add(id);
   });
   return p;
+}
+/* ============================================================================
+   3b. ORDINANCE PRESETS  (City of Austin, TX)
+
+   Everything here is ADVISORY. The app computes what the rules imply and flags it
+   for you to confirm; it never asserts legal status. Regulatory classification is
+   the City Arborist's call, ordinances change, and a wrong call here has real
+   consequences — so the UI always says "verify".
+
+   What IS exact, and is computed as such, is the arithmetic:
+
+     Multi-trunk diameter  — largest stem + half of EACH additional stem, all
+                             measured at 4.5 ft above grade. The City's own worked
+                             example: stems of 18" and 16" -> 18 + (16/2) = 26".
+     Critical Root Zone    — radius of 1 foot per 1 inch of trunk diameter.
+                             Half CRZ and quarter CRZ are the inner rings.
+     Circumference -> dia. — the City instructs measuring circumference with a
+                             flexible tape at 4.5 ft, so C / pi is offered too.
+
+   Sources (checked Aug 2026):
+     austintexas.gov/development-services/trees-residential-property
+     austintexas.gov/development-services/trees-commercial-and-multifamily-property
+     Environmental Criteria Manual s3.5.2 (Tree and Natural Area Preservation)
+   ========================================================================== */
+
+const ORDINANCES = {
+
+  none: {
+    id: 'none',
+    label: 'No ordinance preset',
+    multiTrunkRule: 'largest-plus-half',      // still the most common convention
+    crzFeetPerInch: 1,
+    classify: null,
+  },
+
+  austin: {
+    id: 'austin',
+    label: 'Austin, TX',
+    jurisdiction: 'City of Austin',
+    measureHeightFt: 4.5,
+    multiTrunkRule: 'largest-plus-half',
+    crzFeetPerInch: 1,
+
+    /* Thresholds differ by property type — an easy and expensive thing to get
+       wrong, so it is an explicit choice rather than a hidden default. */
+    protectedThresholdIn: { residential: 19, commercial: 8 },
+    heritageThresholdIn: 24,
+
+    /* CRZ impact limits, ECM 3.5.2. */
+    crzRules: [
+      'At least 50% of the CRZ must remain undisturbed at natural grade.',
+      'No cuts or fill greater than 4 inches within the 1/2 CRZ.',
+      'No impacts permitted within the 1/4 CRZ.',
+    ],
+
+    /* Heritage species. `genus` matches the botanical name; `keywords` match the
+       common name, so free-typed entries still classify. */
+    heritageSpecies: [
+      { label: 'All oaks',            genus: 'quercus',            keywords: ['oak'] },
+      { label: 'Pecan',               genus: 'carya illinoinensis', keywords: ['pecan'] },
+      { label: 'Texas ash',           genus: 'fraxinus texensis',  keywords: ['texas ash'] },
+      { label: 'Bald cypress',        genus: 'taxodium',           keywords: ['bald cypress'] },
+      { label: 'American elm',        genus: 'ulmus americana',    keywords: ['american elm'] },
+      { label: 'Texas madrone',       genus: 'arbutus xalapensis', keywords: ['madrone'] },
+      { label: 'Bigtooth maple',      genus: 'acer grandidentatum', keywords: ['bigtooth maple'] },
+      { label: 'Arizona walnut',      genus: 'juglans major',      keywords: ['arizona walnut'] },
+      { label: 'Eastern black walnut',genus: 'juglans nigra',      keywords: ['black walnut'] },
+      /* Cedar elm appears on several published summaries of the ordinance but not
+         on the City's current species list. Flagged rather than silently included
+         or silently dropped — either would be a guess presented as fact. */
+      { label: 'Cedar elm', genus: 'ulmus crassifolia', keywords: ['cedar elm'], disputed: true },
+    ],
+
+    /* Commonly cited as removable regardless of size. The authoritative list lives
+       in the Land Development Code; treat these as a prompt to check, not a ruling. */
+    exemptSpecies: [
+      { label: 'Ashe juniper', genus: 'juniperus ashei', keywords: ['ashe juniper', 'mountain cedar'] },
+      { label: 'Chinaberry',   genus: 'melia azedarach', keywords: ['chinaberry'] },
+      { label: 'Ligustrum',    genus: 'ligustrum',       keywords: ['ligustrum', 'privet'] },
+      { label: 'Paper mulberry', genus: 'broussonetia',  keywords: ['paper mulberry'] },
+      { label: 'Chinese tallow', genus: 'triadica sebifera', keywords: ['chinese tallow', 'popcorn tree'] },
+    ],
+
+    note: 'Advisory only. Confirm status with the City Arborist before relying on it '
+        + 'for a permit, a site plan, or a removal.',
+  },
+};
+
+/* -------- Diameter arithmetic ---------------------------------------------- */
+
+/**
+ * Austin multi-trunk diameter: largest stem + half of every other stem.
+ * @param {number[]} trunks stem diameters in inches, measured at 4.5 ft
+ * @returns {number|null} rounded to 0.1"
+ */
+function multiTrunkDiameter(trunks) {
+  const stems = (trunks || []).map(Number).filter(n => Number.isFinite(n) && n > 0);
+  if (!stems.length) return null;
+  const largest = Math.max.apply(null, stems);
+  let counted = false;
+  const total = stems.reduce((sum, d) => {
+    /* Only ONE stem counts at full width, even if two tie for largest. */
+    if (!counted && d === largest) { counted = true; return sum + d; }
+    return sum + d / 2;
+  }, 0);
+  return Math.round(total * 10) / 10;
+}
+
+/** Circumference (in) -> diameter (in), how the City tells you to measure. */
+function circumferenceToDiameter(circumferenceIn) {
+  const c = Number(circumferenceIn);
+  if (!Number.isFinite(c) || c <= 0) return null;
+  return Math.round((c / Math.PI) * 10) / 10;
+}
+
+/** Effective diameter for an observation: multi-trunk when stems are recorded. */
+function observationDiameter(obs) {
+  if (!obs) return null;
+  if (obs.trunks && obs.trunks.length > 1) return multiTrunkDiameter(obs.trunks);
+  if (obs.trunks && obs.trunks.length === 1) return obs.trunks[0];
+  return obs.dbhIn;
+}
+
+/* -------- Classification ---------------------------------------------------- */
+
+const activeOrdinance = () => ORDINANCES[state.project.ordinance] || ORDINANCES.none;
+
+/** Does this tree's species match one of `list`? Returns the matched entry. */
+function matchSpecies(tree, list) {
+  const common = String(tree.species || '').toLowerCase();
+  const botanical = String(tree.botanical || '').toLowerCase();
+  if (!common && !botanical) return null;
+
+  return (list || []).find(entry => {
+    if (entry.genus && botanical && botanical.indexOf(entry.genus) === 0) return true;
+    return (entry.keywords || []).some(k => common.indexOf(k) >= 0);
+  }) || null;
+}
+
+/**
+ * Advisory ordinance status for a tree.
+ * @returns {{level:'heritage'|'protected'|'exempt'|'none', diameter:number|null,
+ *            reasons:string[], verify:boolean}|null}
+ */
+function classifyTree(tree) {
+  const rules = activeOrdinance();
+  if (!rules || rules.id === 'none') return null;
+
+  const obs = latestObservation(tree);
+  const diameter = observationDiameter(obs);
+  const reasons = [];
+
+  const exempt = matchSpecies(tree, rules.exemptSpecies);
+  if (exempt) {
+    reasons.push(exempt.label + ' is commonly listed as exempt from permitting at any size.');
+    return { level: 'exempt', diameter: diameter, reasons: reasons, verify: true };
+  }
+
+  if (diameter == null) {
+    return { level: 'none', diameter: null, verify: false,
+             reasons: ['Record a diameter to determine ordinance status.'] };
+  }
+
+  const heritage = matchSpecies(tree, rules.heritageSpecies);
+  if (heritage && diameter >= rules.heritageThresholdIn) {
+    reasons.push(heritage.label + ' at ' + diameter + '" meets the '
+      + rules.heritageThresholdIn + '" Heritage threshold.');
+    if (heritage.disputed) {
+      reasons.push('Note: ' + heritage.label + ' appears on some published lists of the '
+        + 'ordinance but not the City\'s current species list — confirm this one.');
+    }
+    return { level: 'heritage', diameter: diameter, reasons: reasons, verify: true };
+  }
+
+  const type = state.project.propertyType === 'commercial' ? 'commercial' : 'residential';
+  const threshold = rules.protectedThresholdIn[type];
+  if (diameter >= threshold) {
+    reasons.push(diameter + '" meets the ' + threshold + '" Protected threshold for '
+      + type + ' property.');
+    if (heritage) {
+      reasons.push('A ' + heritage.label + ' becomes Heritage at '
+        + rules.heritageThresholdIn + '" — this one is '
+        + Math.round((rules.heritageThresholdIn - diameter) * 10) / 10 + '" short.');
+    }
+    return { level: 'protected', diameter: diameter, reasons: reasons, verify: true };
+  }
+
+  reasons.push(diameter + '" is below the ' + threshold + '" Protected threshold for '
+    + type + ' property.');
+  return { level: 'none', diameter: diameter, reasons: reasons, verify: false };
+}
+
+const ORDINANCE_LABELS = {
+  heritage: 'Heritage', protected: 'Protected', exempt: 'Exempt', none: 'Not regulated',
+};
+
+/* -------- Critical root zone ------------------------------------------------ */
+
+/** Full CRZ radius in feet: 1 ft per inch of diameter. */
+function crzRadiusFt(tree) {
+  const rules = activeOrdinance();
+  const diameter = observationDiameter(latestObservation(tree));
+  if (diameter == null || !rules) return null;
+  return diameter * (rules.crzFeetPerInch || 1);
 }
 /* ============================================================================
    4. STATE & HISTORY
@@ -2343,9 +2681,93 @@ function applyView() {
 
 function renderMap() {
   renderStructures();
+  renderCrz();
   renderCanopy();
   renderTrees();
   renderScaleBar();
+}
+
+/* -------- Critical root zones ---------------------------------------------- */
+
+/**
+ * CRZ rings at true scale: full, half, and quarter.
+ *
+ * This is the view that actually answers the question a plot-plan survey exists to
+ * answer — how close the built work comes to the roots. The quarter ring is filled
+ * because Austin permits no impact inside it at all.
+ */
+function renderCrz() {
+  const g = $('#gCrz');
+  if (!state.layers.rootzones || !hasScale()) { g.innerHTML = ''; return; }
+
+  let html = '';
+  state.trees.forEach(t => {
+    if (t.status === 'Removed') return;
+    const radiusFt = crzRadiusFt(t);
+    if (!radiusFt) return;
+    const R = ftToVb(radiusFt);
+    if (!R || R <= 0) return;
+
+    const cx = vbX(t.x).toFixed(2), cy = vbY(t.y).toFixed(2);
+    const impact = crzImpact(t);
+    const breached = impact && impact.quarterImpacted;
+
+    html += '<circle class="crz-full" cx="' + cx + '" cy="' + cy + '" r="' + R.toFixed(2) + '"/>'
+          + '<circle class="crz-half" cx="' + cx + '" cy="' + cy + '" r="' + (R * 0.5).toFixed(2) + '"/>'
+          + '<circle class="crz-quarter' + (breached ? ' breached' : '') + '" cx="' + cx
+          + '" cy="' + cy + '" r="' + (R * 0.25).toFixed(2) + '"/>';
+  });
+  g.innerHTML = html;
+}
+
+/**
+ * How much of a tree's CRZ is covered by mapped structures.
+ *
+ * Sampled rather than solved analytically: the CRZ is a disc, the structures are an
+ * arbitrary set of overlapping rectangles, and union-of-intersections has a lot of
+ * awkward cases. Sampling on an equal-area polar grid sidesteps all of them, and at
+ * this resolution is accurate to well under a percent — far finer than the input
+ * measurements justify.
+ *
+ * @returns {{fraction:number, quarterImpacted:boolean, halfFraction:number}|null}
+ */
+function crzImpact(tree) {
+  const radiusFt = crzRadiusFt(tree);
+  if (radiusFt == null || !hasScale() || !state.structures.length) return null;
+
+  const R = ftToVb(radiusFt);
+  if (!R || R <= 0) return null;
+
+  const cx = vbX(tree.x), cy = vbY(tree.y), H = vbHeight();
+  const rects = state.structures.map(s => ({
+    x0: vbX(Math.min(s.x, s.x + s.width)),  x1: vbX(Math.max(s.x, s.x + s.width)),
+    y0: Math.min(s.y, s.y + s.height) * H,  y1: Math.max(s.y, s.y + s.height) * H,
+  }));
+
+  const RINGS = 28, SPOKES = 120;
+  let total = 0, hit = 0, quarterHit = 0, halfHit = 0, halfTotal = 0;
+
+  for (let i = 0; i < RINGS; i++) {
+    /* sqrt spacing keeps every sample representing the same area, so the hit
+       ratio is an area fraction and not biased toward the centre. */
+    const rr = R * Math.sqrt((i + 0.5) / RINGS);
+    for (let j = 0; j < SPOKES; j++) {
+      const a = ((j + 0.5) / SPOKES) * Math.PI * 2;
+      const px = cx + rr * Math.cos(a), py = cy + rr * Math.sin(a);
+      const covered = rects.some(r => px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1);
+
+      total++;
+      if (covered) hit++;
+      if (rr <= R * 0.5) { halfTotal++; if (covered) halfHit++; }
+      if (rr <= R * 0.25 && covered) quarterHit++;
+    }
+  }
+
+  return {
+    fraction: hit / total,
+    halfFraction: halfTotal ? halfHit / halfTotal : 0,
+    quarterImpacted: quarterHit > 0,
+  };
 }
 
 function renderStructures() {
@@ -2937,6 +3359,19 @@ function renderTreeEditor(tree) {
   /* Show the active visit's values if present; otherwise preview the carried-forward
      values from the last visit so the field is not misleadingly blank. */
   const shown = obs || latestObservation(tree);
+
+  /* Multi-trunk: the diameter field becomes a derived read-out, because editing it
+     directly would silently contradict the stems it is computed from. */
+  const trunks = (shown && shown.trunks) || [];
+  const multi = trunks.length > 0;
+  setValue($('#fMultiTrunk'), multi);
+  $('#trunkPanel').hidden = !multi;
+  const dbhInput = $('#fDbh');
+  dbhInput.readOnly = multi;
+  dbhInput.title = multi ? 'Calculated from the stem diameters below.' : '';
+  dbhInput.style.background = multi ? '#f2f5f2' : '';
+  renderTrunks(shown);
+
   setValue($('#fDbh'),       shown && shown.dbhIn    != null ? shown.dbhIn    : '');
   setValue($('#fHeight'),    shown && shown.heightFt != null ? shown.heightFt : '');
   setValue($('#fSpread'),    shown && shown.spreadFt != null ? shown.spreadFt : '');
@@ -2947,10 +3382,100 @@ function renderTreeEditor(tree) {
   renderChips($('#fDefects'), DEFECTS, (shown && shown.defects) || []);
   renderChips($('#fRecommendations'), RECOMMENDATIONS, (shown && shown.recommendations) || []);
 
+  renderOrdinance(tree);
   renderPhotoGrid(tree);
   renderTreeLocation(tree);
   renderObsHistory(tree);
   renderNoteHistory(tree);
+}
+
+/* -------- Multi-trunk stems -------------------------------------------------- */
+
+function renderTrunks(obs) {
+  const host = $('#trunkList');
+  const trunks = (obs && obs.trunks) || [];
+  const rules = activeOrdinance();
+
+  $('#trunkRuleNote').textContent = 'Measure every stem at '
+    + (rules.measureHeightFt || 4.5) + ' ft above grade. The largest stem counts in '
+    + 'full; each additional stem counts at half.';
+
+  /* Highlight which stem is being counted at full width — exactly one, even on a tie. */
+  let largestIdx = -1, largestVal = -Infinity;
+  trunks.forEach((d, i) => {
+    if (Number.isFinite(d) && d > largestVal) { largestVal = d; largestIdx = i; }
+  });
+
+  host.innerHTML = trunks.map((d, i) =>
+    '<div class="trunk-row' + (i === largestIdx ? ' largest' : '') + '">'
+    + '<span class="n">Stem ' + (i + 1) + (i === largestIdx ? ' ×1' : ' ×½') + '</span>'
+    + '<input type="number" step="0.1" min="0" inputmode="decimal" data-trunk="' + i
+    + '" value="' + (d == null ? '' : d) + '" aria-label="Stem ' + (i + 1) + ' diameter in inches">'
+    + '<button class="rm-trunk danger" data-rm-trunk="' + i
+    + '" aria-label="Remove stem ' + (i + 1) + '">&times;</button>'
+    + '</div>').join('');
+
+  const total = multiTrunkDiameter(trunks);
+  const badge = $('#trunkResult');
+  if (total == null) {
+    badge.textContent = 'Enter stem diameters';
+    badge.className = 'badge warn';
+  } else {
+    const sum = trunks.filter(Number.isFinite).map(n => n);
+    badge.textContent = sum.length > 1
+      ? sum.length + ' stems → ' + total + '" diameter'
+      : total + '" diameter';
+    badge.className = 'badge';
+  }
+}
+
+/* -------- Ordinance status --------------------------------------------------- */
+
+function renderOrdinance(tree) {
+  const section = $('#ordinanceSection');
+  const status = classifyTree(tree);
+  section.hidden = !status;
+  if (!status) return;
+
+  const badge = $('#ordinanceBadge');
+  badge.textContent = ORDINANCE_LABELS[status.level] || '—';
+  badge.className = 'badge ord-' + status.level;
+
+  const rules = activeOrdinance();
+  let html = '<ul>' + status.reasons.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>';
+  if (status.verify && rules.note) {
+    html += '<span class="verify-note">' + esc(rules.note) + '</span>';
+  }
+  $('#ordinanceDetail').innerHTML = html;
+
+  /* Critical root zone, and how much of it the mapped structures take. */
+  const radiusFt = crzRadiusFt(tree);
+  const el = $('#crzText');
+  if (radiusFt == null) { el.textContent = ''; return; }
+
+  let text = '<b>Critical root zone:</b> ' + fmtDistance(radiusFt) + ' radius'
+    + ' (½ CRZ ' + fmtDistance(radiusFt / 2) + ', ¼ CRZ ' + fmtDistance(radiusFt / 4) + ').';
+
+  if (!hasScale()) {
+    text += ' Calibrate the plan scale to draw it and measure encroachment.';
+  } else {
+    const impact = crzImpact(tree);
+    if (!impact) {
+      text += ' No structures mapped yet.';
+    } else {
+      const pct = Math.round(impact.fraction * 100);
+      text += ' <b>' + pct + '%</b> covered by mapped structures';
+      if (impact.quarterImpacted) {
+        text += ' — <span class="err">a structure sits inside the ¼ CRZ, where no impact is permitted</span>';
+      } else if (impact.fraction > 0.5) {
+        text += ' — <span class="err">over the 50% that must stay undisturbed</span>';
+      } else if (impact.fraction > 0.35) {
+        text += ' — <span class="warn">approaching the 50% limit</span>';
+      }
+      text += '.';
+    }
+  }
+  el.innerHTML = text;
 }
 
 function renderStructureEditor(s) {
@@ -3297,7 +3822,10 @@ function renderProjectPanel() {
   setValue($('#pClient'), state.project.client);
   setValue($('#pArborist'), state.project.arborist);
   setValue($('#pNotes'), state.project.notes);
+  setValue($('#pOrdinance'), state.project.ordinance);
+  setValue($('#pPropertyType'), state.project.propertyType);
   setValue($('#pOpacity'), state.background.opacity);
+  renderOrdinanceSummary();
 
   const fpu = feetPerVbUnit();
   $('#scaleStatus').innerHTML = fpu
@@ -3309,6 +3837,42 @@ function renderProjectPanel() {
   renderSummary();
   renderStorageStatus();
   renderPwaStatus();
+}
+
+function renderOrdinanceSummary() {
+  const host = $('#ordinanceSummary');
+  const rules = activeOrdinance();
+
+  if (!rules || rules.id === 'none') {
+    $('#pPropertyType').disabled = true;
+    host.innerHTML = 'No preset selected. Diameters are recorded as entered, and a '
+      + 'multi-trunk tree still totals as largest stem + half of each additional stem.';
+    return;
+  }
+  $('#pPropertyType').disabled = false;
+
+  const type = state.project.propertyType === 'commercial' ? 'commercial' : 'residential';
+  const counts = { heritage: 0, protected: 0, exempt: 0, none: 0 };
+  state.trees.forEach(t => {
+    const c = classifyTree(t);
+    if (c) counts[c.level] = (counts[c.level] || 0) + 1;
+  });
+
+  host.innerHTML =
+      '<ul>'
+    + '<li>Protected at <b>' + rules.protectedThresholdIn[type] + '"</b> on ' + type
+    + ' property; listed species become Heritage at <b>' + rules.heritageThresholdIn + '"</b>.</li>'
+    + '<li>Diameter measured at ' + rules.measureHeightFt + ' ft above grade; multi-trunk '
+    + 'totals as largest stem + ½ of each additional stem.</li>'
+    + '<li>Critical root zone radius = 1 ft per inch of diameter.</li>'
+    + rules.crzRules.map(r => '<li>' + esc(r) + '</li>').join('')
+    + '</ul>'
+    + '<div class="row" style="margin-top:7px">'
+    + '<span class="badge ord-heritage">Heritage ' + counts.heritage + '</span>'
+    + '<span class="badge ord-protected">Protected ' + counts.protected + '</span>'
+    + '<span class="badge ord-exempt">Exempt ' + counts.exempt + '</span>'
+    + '</div>'
+    + '<span class="verify-note">' + esc(rules.note) + '</span>';
 }
 
 function renderSummary() {
@@ -3659,7 +4223,8 @@ function csvCell(v) {
 }
 
 function exportCsv() {
-  const headers = ['Tree ID', 'Species', 'Botanical', 'Status', 'Protected', 'DBH (in)',
+  const headers = ['Tree ID', 'Species', 'Botanical', 'Status', 'Flagged', 'Diameter (in)',
+    'Stems', 'Stem diameters (in)', 'Ordinance', 'CRZ radius (ft)', 'CRZ impacted (%)',
     'Height (ft)', 'Spread (ft)', 'Condition', 'Priority', 'Defects', 'Recommended work',
     'Last assessed', 'Photos', 'Marked photos', 'Latitude', 'Longitude', 'GPS spread (m)',
     'Notes', 'X', 'Y'];
@@ -3669,9 +4234,19 @@ function exportCsv() {
     .map(t => {
       const o = latestObservation(t) || {};
       const loc = treeLocation(t);
+      const status = classifyTree(t);
+      const crz = crzRadiusFt(t);
+      const impact = crzImpact(t);
+      const stems = (o.trunks || []).filter(n => Number.isFinite(n));
       return [
         t.treeId, t.species, t.botanical, t.status, t.protected ? 'Yes' : 'No',
-        o.dbhIn, o.heightFt, o.spreadFt, o.condition, o.priority,
+        o.dbhIn,
+        stems.length > 1 ? stems.length : '',
+        stems.length > 1 ? stems.join(' + ') : '',
+        status ? ORDINANCE_LABELS[status.level] : '',
+        crz == null ? '' : Math.round(crz * 10) / 10,
+        impact ? Math.round(impact.fraction * 100) : '',
+        o.heightFt, o.spreadFt, o.condition, o.priority,
         (o.defects || []).join('; '), (o.recommendations || []).join('; '),
         o.date || '', t.photos.length,
         t.photos.reduce((n, p) => n + (Annot.count(p) ? 1 : 0), 0),
@@ -3693,20 +4268,33 @@ function exportCsv() {
 
 function buildPrintReport() {
   const p = state.project;
+  const rules = activeOrdinance();
   const meta = [
     ['Property', p.name], ['Address', p.address], ['Client', p.client],
     ['Arborist', p.arborist], ['Report date', fmtDate(todayIso())],
     ['Trees inventoried', state.trees.length],
-  ].filter(r => r[1] !== '' && r[1] != null);
+    rules && rules.id !== 'none'
+      ? ['Ordinance', rules.label + ' — ' + (p.propertyType === 'commercial'
+          ? 'commercial / multifamily' : 'residential')]
+      : null,
+  ].filter(r => r && r[1] !== '' && r[1] != null);
 
   const rows = state.trees.slice()
     .sort((a, b) => String(a.treeId).localeCompare(String(b.treeId), undefined, { numeric: true }))
     .map(t => {
       const o = latestObservation(t) || {};
+      const status = classifyTree(t);
+      const crz = crzRadiusFt(t);
+      const stems = (o.trunks || []).filter(n => Number.isFinite(n));
       return '<tr>'
         + '<td>' + esc(t.treeId) + '</td>'
-        + '<td>' + esc(t.species || '—') + (t.protected ? '<br><i>protected</i>' : '') + '</td>'
-        + '<td>' + (o.dbhIn != null ? esc(o.dbhIn) : '—') + '</td>'
+        + '<td>' + esc(t.species || '—')
+          + (t.botanical ? '<br><i>' + esc(t.botanical) + '</i>' : '') + '</td>'
+        + '<td>' + (o.dbhIn != null ? esc(o.dbhIn) : '—')
+          + (stems.length > 1 ? '<br><span style="font-size:9px">' + esc(stems.join(' + '))
+             + ' (' + stems.length + ' stems)</span>' : '') + '</td>'
+        + '<td>' + (status ? esc(ORDINANCE_LABELS[status.level]) : '—') + '</td>'
+        + '<td>' + (crz == null ? '—' : esc(Math.round(crz * 10) / 10)) + '</td>'
         + '<td>' + (o.heightFt != null ? esc(o.heightFt) : '—') + '</td>'
         + '<td>' + (o.spreadFt != null ? esc(o.spreadFt) : '—') + '</td>'
         + '<td>' + esc(o.condition || 'Unassessed') + '</td>'
@@ -3723,10 +4311,17 @@ function buildPrintReport() {
     + '</table>'
     + '<h2>Tree schedule</h2>'
     + '<table><thead><tr>'
-    + ['ID', 'Species', 'DBH (in)', 'Ht (ft)', 'Spread (ft)', 'Condition', 'Priority',
-       'Recommended work', 'Defects'].map(h => '<th>' + h + '</th>').join('')
-    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="9">No trees recorded.</td></tr>')
-    + '</tbody></table>';
+    + ['ID', 'Species', 'Dia. (in)', 'Ordinance', 'CRZ (ft)', 'Ht (ft)', 'Spread (ft)',
+       'Condition', 'Priority', 'Recommended work', 'Defects']
+      .map(h => '<th>' + h + '</th>').join('')
+    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="11">No trees recorded.</td></tr>')
+    + '</tbody></table>'
+    + (rules && rules.id !== 'none'
+        ? '<p style="font-size:10px;margin-top:10px"><b>' + esc(rules.label) + ':</b> '
+          + 'diameter measured at ' + rules.measureHeightFt + ' ft above grade; multi-trunk '
+          + 'totalled as largest stem + ½ of each additional stem. Critical root zone radius '
+          + '= 1 ft per inch of diameter. ' + esc(rules.note) + '</p>'
+        : '');
 }
 
 /* ============================================================================
@@ -3870,6 +4465,8 @@ function populateSelects() {
     '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
   $('#speciesList').innerHTML = SPECIES.map(s =>
     '<option value="' + esc(s[0]) + '">' + esc(s[1]) + '</option>').join('');
+  $('#pOrdinance').innerHTML = Object.keys(ORDINANCES).map(k =>
+    '<option value="' + esc(k) + '">' + esc(ORDINANCES[k].label) + '</option>').join('');
 }
 
 /** Mutate the active visit's observation for the selected tree, creating it on demand. */
@@ -3919,8 +4516,8 @@ function wireEvents() {
   document.addEventListener('keydown', onKeyDown);
 
   /* --- layers --- */
-  [['layerPlan', 'plan'], ['layerCanopy', 'canopy'], ['layerTrees', 'trees'],
-   ['layerStructures', 'structures'], ['layerLabels', 'labels']]
+  [['layerPlan', 'plan'], ['layerCanopy', 'canopy'], ['layerRootzones', 'rootzones'],
+   ['layerTrees', 'trees'], ['layerStructures', 'structures'], ['layerLabels', 'labels']]
     .forEach(([id, key]) => {
       $('#' + id).onchange = e => { state.layers[key] = e.target.checked; render(); };
     });
@@ -3968,7 +4565,12 @@ function wireEvents() {
   $('#fProtected').onchange = e => { const v = e.target.checked; editTree(t => { t.protected = v; }); };
 
   /* --- observation fields --- */
-  $('#fDbh').onchange       = e => { const v = numOrNull(e.target.value); editObservation(o => { o.dbhIn = v; }); };
+  $('#fDbh').onchange = e => {
+    /* Read-only while multi-trunk: the value is derived from the stems. */
+    if (e.target.readOnly) return;
+    const v = numOrNull(e.target.value);
+    editObservation(o => { o.dbhIn = v; });
+  };
   $('#fHeight').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.heightFt = v; }); };
   $('#fSpread').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.spreadFt = v; }); };
   $('#fCondition').onchange = e => { const v = e.target.value; editObservation(o => { o.condition = v; }); };
@@ -3987,6 +4589,80 @@ function wireEvents() {
   };
   $('#fDefects').addEventListener('click', chipHandler('defects'));
   $('#fRecommendations').addEventListener('click', chipHandler('recommendations'));
+
+  /* --- multi-trunk stems --- */
+
+  /* dbhIn stays the single value every other part of the app reads (CRZ, canopy,
+     sorting, CSV, report). When stems exist it is recomputed from them, so nothing
+     downstream needs to know about multi-trunk at all. */
+  const syncTrunkDiameter = obs => {
+    if (obs.trunks && obs.trunks.length) {
+      const total = multiTrunkDiameter(obs.trunks);
+      if (total != null) obs.dbhIn = total;
+    }
+  };
+
+  $('#fMultiTrunk').onchange = e => {
+    const on = e.target.checked;
+    editObservation(o => {
+      if (on) {
+        /* Seed with the diameter already recorded, plus a blank second stem — a
+           one-stem "multi-trunk" tree is not what anyone means by the phrase. */
+        o.trunks = o.dbhIn != null ? [o.dbhIn, null] : [null, null];
+      } else {
+        o.trunks = [];      // dbhIn keeps its last computed value rather than clearing
+      }
+      syncTrunkDiameter(o);
+    });
+  };
+
+  $('#trunkList').addEventListener('change', e => {
+    const input = e.target.closest('[data-trunk]');
+    if (!input) return;
+    const idx = Number(input.getAttribute('data-trunk'));
+    const value = numOrNull(input.value);
+    editObservation(o => {
+      if (!Array.isArray(o.trunks)) o.trunks = [];
+      o.trunks[idx] = value;
+      syncTrunkDiameter(o);
+    });
+  });
+
+  $('#trunkList').addEventListener('click', e => {
+    const btn = e.target.closest('[data-rm-trunk]');
+    if (!btn) return;
+    const idx = Number(btn.getAttribute('data-rm-trunk'));
+    editObservation(o => {
+      o.trunks.splice(idx, 1);
+      syncTrunkDiameter(o);
+    });
+  });
+
+  $('#btnAddTrunk').onclick = () => editObservation(o => {
+    if (!Array.isArray(o.trunks)) o.trunks = [];
+    o.trunks.push(null);
+  });
+
+  $('#btnCircToDia').onclick = () => {
+    const circumference = numOrNull($('#fCirc').value);
+    if (circumference == null || circumference <= 0) {
+      setStatus('Enter the circumference first.', 'err');
+      return;
+    }
+    const diameter = circumferenceToDiameter(circumference);
+    editObservation(o => {
+      if (o.trunks && o.trunks.length) {
+        /* Fill the first blank stem, otherwise add one. */
+        const blank = o.trunks.findIndex(t => t == null);
+        if (blank >= 0) o.trunks[blank] = diameter; else o.trunks.push(diameter);
+        syncTrunkDiameter(o);
+      } else {
+        o.dbhIn = diameter;
+      }
+    });
+    $('#fCirc').value = '';
+    setStatus(circumference + '" around = ' + diameter + '" diameter.');
+  };
 
   /* --- notes --- */
   $('#btnAddNote').onclick = () => {
@@ -4238,6 +4914,16 @@ function wireEvents() {
   projField('pClient', 'client');
   projField('pArborist', 'arborist');
   projField('pNotes', 'notes');
+
+  const ordinanceField = (id, key) => {
+    $('#' + id).onchange = e => {
+      const before = snapshot();
+      state.project[key] = e.target.value;
+      commit(before);
+    };
+  };
+  ordinanceField('pOrdinance', 'ordinance');
+  ordinanceField('pPropertyType', 'propertyType');
 
   $('#pOpacity').oninput = e => {
     state.background.opacity = Number(e.target.value);
