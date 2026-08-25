@@ -14,7 +14,7 @@
    will keep serving the previously cached build.
    ========================================================================== */
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v-94f9791d84';
 const CACHE_NAME = 'arborist-shell-' + CACHE_VERSION;
 
 /* Relative paths so the app works from any host and any subdirectory
