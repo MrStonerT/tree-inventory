@@ -3,21 +3,280 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Arborist Assistant</title>
+<title>Arborist Assistant — tree surveys on your plot plan</title>
+<meta name="description" content="Lay your trees out on your plot plan survey, record condition, photos, voice notes and measurements, and build history across visits. Works offline. Your data stays on your device.">
+<meta name="theme-color" content="#276b40">
 <link rel="icon" href="icons/icon-32.png" sizes="32x32">
-<link rel="canonical" href="tree_plot_plan_editor.html">
-<!-- The app keeps its own filename so the published copy stays byte-identical to the
-     source. This is just a convenience hop so the bare URL works. -->
-<meta http-equiv="refresh" content="0; url=tree_plot_plan_editor.html">
-<script>location.replace('tree_plot_plan_editor.html');</script>
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>
-  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef1ed;
-    color:#152119;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-align:center}
-  a{color:#276b40;font-weight:600}
+/* Set for comfortable reading first: large type, strong contrast, generous spacing. */
+:root{
+  --green:#276b40; --green-dark:#1c4f2f; --green-soft:#e2f0e5;
+  --ink:#152119; --ink-soft:#4d5a51;
+  --line:#d2dad3; --bg:#f6f8f5; --panel:#fff;
+  --accent:#b7642c; --good:#2f8a4e; --fair:#c9a227; --poor:#d4772b;
+}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink);
+  font:19px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:900px; margin:0 auto; padding:0 22px}
+h1{font-size:40px; line-height:1.15; margin:0 0 12px; letter-spacing:-.02em}
+h2{font-size:28px; line-height:1.25; margin:48px 0 14px; letter-spacing:-.01em}
+h3{font-size:21px; margin:26px 0 8px}
+p{margin:0 0 16px; max-width:62ch}
+a{color:var(--green-dark)}
+strong{font-weight:650}
+
+/* ---- Hero ---- */
+.hero{background:linear-gradient(170deg,#2f7a4a,#1c4f2f); color:#fff; padding:52px 0 46px}
+.hero h1{color:#fff}
+.hero p{color:#dbeade; font-size:21px; max-width:56ch}
+.hero .badge-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:8px}
+.pill{background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.28);
+  color:#fff; border-radius:999px; padding:5px 14px; font-size:15px}
+.cta{display:inline-flex; align-items:center; gap:10px; margin-top:26px;
+  background:#fff; color:var(--green-dark); font-size:21px; font-weight:700;
+  padding:17px 30px; border-radius:12px; text-decoration:none;
+  box-shadow:0 4px 16px rgba(0,0,0,.22)}
+.cta:hover{background:#eef6f0}
+.cta-note{display:block; margin-top:12px; font-size:16px; color:#c7ddcc}
+
+/* ---- Cards & steps ---- */
+.card{background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:24px 26px; margin:20px 0; box-shadow:0 1px 3px rgba(21,33,25,.06)}
+ol.steps{counter-reset:step; list-style:none; padding:0; margin:22px 0}
+ol.steps > li{counter-increment:step; position:relative; padding:0 0 26px 62px; margin:0}
+ol.steps > li::before{content:counter(step); position:absolute; left:0; top:-2px;
+  width:44px; height:44px; border-radius:50%; background:var(--green); color:#fff;
+  font-size:21px; font-weight:700; display:grid; place-items:center}
+ol.steps > li:last-child{padding-bottom:0}
+ol.steps h3{margin:6px 0 6px}
+.aside{background:var(--green-soft); border-left:5px solid var(--green);
+  border-radius:0 10px 10px 0; padding:16px 20px; margin:20px 0}
+.aside p:last-child{margin-bottom:0}
+ul.plain{padding-left:22px}
+ul.plain li{margin-bottom:10px}
+
+figure{margin:26px 0}
+figcaption{font-size:16px; color:var(--ink-soft); margin-top:10px; text-align:center}
+svg.demo{width:100%; height:auto; display:block; background:#fff;
+  border:1px solid var(--line); border-radius:12px}
+
+.two-up{display:grid; grid-template-columns:1fr 1fr; gap:22px}
+@media (max-width:760px){
+  body{font-size:18px}
+  h1{font-size:32px} h2{font-size:25px}
+  .two-up{grid-template-columns:1fr}
+  .hero{padding:40px 0 36px}
+}
+footer{margin:56px 0 40px; padding-top:24px; border-top:1px solid var(--line);
+  color:var(--ink-soft); font-size:16px}
 </style>
 </head>
 <body>
-  <p>Opening the Arborist Assistant&hellip;<br>
-     <a href="tree_plot_plan_editor.html">Continue</a></p>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Arborist Assistant</h1>
+    <p>Put your trees on your plot plan. Record what you find — measurements, condition,
+       photos, and voice notes — and build a picture that grows every time you walk the property.</p>
+    <div class="badge-row">
+      <span class="pill">Works with no signal</span>
+      <span class="pill">Nothing is uploaded</span>
+      <span class="pill">Free, no account</span>
+    </div>
+    <a class="cta" href="tree_plot_plan_editor.html">Open the app &rarr;</a>
+    <span class="cta-note">Opens straight away. Nothing to install, nothing to sign up for.</span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <h2>What it looks like</h2>
+  <p>Your own survey sits underneath. Each tree is a numbered marker you can tap. Once you
+     tell the app the scale, it draws each tree&rsquo;s canopy and its root zone at true size,
+     so you can see what is really overhanging the house.</p>
+
+  <figure>
+    <!-- An illustrative property, drawn here rather than photographed, so no real
+         client survey is published. -->
+    <svg class="demo" viewBox="0 0 720 430" role="img"
+         aria-label="Example plot plan with four numbered trees, canopy circles and root zones drawn over a property boundary, a house and a driveway.">
+      <rect width="720" height="430" fill="#fff"/>
+      <!-- property boundary -->
+      <path d="M60 40 L660 40 L660 390 L60 390 Z" fill="#fbfcfa" stroke="#8a9490"
+            stroke-width="2" stroke-dasharray="10 6"/>
+      <text x="70" y="30" font-size="13" fill="#6b7670" font-family="system-ui">PROPERTY LINE — 120.0'</text>
+      <!-- house -->
+      <rect x="250" y="150" width="230" height="140" fill="#dde5ea" stroke="#477091" stroke-width="2"/>
+      <text x="365" y="225" font-size="16" fill="#23394d" text-anchor="middle"
+            font-family="system-ui" font-weight="600">HOUSE</text>
+      <!-- driveway -->
+      <rect x="500" y="290" width="90" height="100" fill="#e8e8e4" stroke="#9aa39c" stroke-width="2"/>
+      <text x="545" y="345" font-size="12" fill="#6b7670" text-anchor="middle" font-family="system-ui">DRIVE</text>
+
+      <!-- tree 1: big live oak overhanging the house -->
+      <circle cx="200" cy="150" r="105" fill="#2f8a4e" fill-opacity=".13" stroke="#2f8a4e" stroke-opacity=".45"/>
+      <circle cx="200" cy="150" r="78" fill="none" stroke="#8a6d3b" stroke-width="1.6" stroke-dasharray="7 5" opacity=".8"/>
+      <circle cx="200" cy="150" r="39" fill="none" stroke="#a8742f" stroke-width="1.6" stroke-dasharray="4 3" opacity=".85"/>
+      <circle cx="200" cy="150" r="20" fill="#c0392b" fill-opacity=".12" stroke="#c0392b" stroke-width="1.6"/>
+      <circle cx="200" cy="150" r="16" fill="#2f8a4e" stroke="#fff" stroke-width="3"/>
+      <text x="200" y="150" font-size="15" fill="#fff" text-anchor="middle" dominant-baseline="central"
+            font-weight="700" font-family="system-ui">1</text>
+      <text x="200" y="182" font-size="12" fill="#152119" text-anchor="middle" font-family="system-ui"
+            font-weight="600" paint-order="stroke" stroke="#fff" stroke-width="3">Live oak · 34"</text>
+
+      <!-- tree 2 -->
+      <circle cx="565" cy="120" r="62" fill="#c9a227" fill-opacity=".13" stroke="#c9a227" stroke-opacity=".45"/>
+      <circle cx="565" cy="120" r="46" fill="none" stroke="#8a6d3b" stroke-width="1.6" stroke-dasharray="7 5" opacity=".8"/>
+      <circle cx="565" cy="120" r="12" fill="#c9a227" stroke="#fff" stroke-width="3"/>
+      <text x="565" y="120" font-size="13" fill="#fff" text-anchor="middle" dominant-baseline="central"
+            font-weight="700" font-family="system-ui">2</text>
+      <text x="565" y="148" font-size="12" fill="#152119" text-anchor="middle" font-family="system-ui"
+            font-weight="600" paint-order="stroke" stroke="#fff" stroke-width="3">Cedar elm · 18"</text>
+
+      <!-- tree 3: poor condition, near the drive -->
+      <circle cx="150" cy="330" r="54" fill="#d4772b" fill-opacity=".13" stroke="#d4772b" stroke-opacity=".45"/>
+      <circle cx="150" cy="330" r="40" fill="none" stroke="#8a6d3b" stroke-width="1.6" stroke-dasharray="7 5" opacity=".8"/>
+      <circle cx="150" cy="330" r="13" fill="#d4772b" stroke="#fff" stroke-width="3"/>
+      <text x="150" y="330" font-size="13" fill="#fff" text-anchor="middle" dominant-baseline="central"
+            font-weight="700" font-family="system-ui">3</text>
+      <text x="150" y="358" font-size="12" fill="#152119" text-anchor="middle" font-family="system-ui"
+            font-weight="600" paint-order="stroke" stroke="#fff" stroke-width="3">Pecan · 22"</text>
+
+      <!-- tree 4 -->
+      <circle cx="620" cy="330" r="34" fill="#2f8a4e" fill-opacity=".13" stroke="#2f8a4e" stroke-opacity=".45"/>
+      <circle cx="620" cy="330" r="10" fill="#2f8a4e" stroke="#fff" stroke-width="3"/>
+      <text x="620" y="330" font-size="12" fill="#fff" text-anchor="middle" dominant-baseline="central"
+            font-weight="700" font-family="system-ui">4</text>
+
+      <!-- scale bar -->
+      <g font-family="system-ui">
+        <text x="70" y="408" font-size="12" fill="#4d5a51">20 ft</text>
+        <path d="M110 404 L170 404" stroke="#152119" stroke-width="2"/>
+        <path d="M110 400 L110 408 M170 400 L170 408" stroke="#152119" stroke-width="2"/>
+      </g>
+      <!-- legend -->
+      <g font-family="system-ui" font-size="12" fill="#4d5a51">
+        <circle cx="430" cy="404" r="6" fill="#2f8a4e" fill-opacity=".2" stroke="#2f8a4e"/>
+        <text x="442" y="408">canopy</text>
+        <circle cx="510" cy="404" r="6" fill="none" stroke="#8a6d3b" stroke-dasharray="3 2"/>
+        <text x="522" y="408">root zone</text>
+        <circle cx="600" cy="404" r="6" fill="#c0392b" fill-opacity=".15" stroke="#c0392b"/>
+        <text x="612" y="408">no-dig zone</text>
+      </g>
+    </svg>
+    <figcaption>An example property. Colour shows condition at a glance — green good, amber fair,
+      orange poor.</figcaption>
+  </figure>
+
+  <h2>Getting started</h2>
+  <p>About ten minutes at the kitchen table, then you are ready to walk.</p>
+
+  <ol class="steps">
+    <li>
+      <h3>Open it and import your plot plan</h3>
+      <p>Press <strong>Import plan</strong> and choose a picture of your survey — a photo of a
+         paper copy works. If yours is a PDF, save it as an image first.</p>
+    </li>
+    <li>
+      <h3>Tell it the scale</h3>
+      <p>Press <strong>Set scale</strong>, drag a line along something you know the length of —
+         the scale bar on the survey, or a property line — and type in that length.
+         This is what lets the app draw canopies and root zones at true size.</p>
+    </li>
+    <li>
+      <h3>Drop a marker on each tree</h3>
+      <p>Press <strong>+ Tree</strong>, then tap where the tree is. Fill in the species and the
+         trunk size. You can type the measurement across the trunk, or the distance around it —
+         whichever way you measured.</p>
+    </li>
+    <li>
+      <h3>Take photos and record what is said</h3>
+      <p>Photograph each tree, and draw straight on the picture to mark where a cut should go.
+         Press <strong>Record</strong> to capture the conversation and type it up later.</p>
+    </li>
+    <li>
+      <h3>Press Save package before you finish</h3>
+      <p>You get one <code>.zip</code> file holding everything — the plan, the data, the photos
+         and the recordings. That file is your record. Keep it somewhere safe.</p>
+    </li>
+  </ol>
+
+  <div class="aside">
+    <p><strong>Coming back next year?</strong> Open your saved file, start a new visit, and walk
+       round again. Last year&rsquo;s numbers are already filled in, so you only change what has
+       changed — and the app shows you the growth.</p>
+  </div>
+
+  <h2>What it keeps track of</h2>
+  <div class="two-up">
+    <div class="card">
+      <h3>For each tree</h3>
+      <ul class="plain">
+        <li>Species, trunk size, height and spread</li>
+        <li>Condition and how urgent any work is</li>
+        <li>Defects seen and work recommended</li>
+        <li>Multiple trunks, totalled the way the city expects</li>
+        <li>Photos, with lines drawn on to show the cuts</li>
+        <li>Voice notes, ready to be typed up</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>For the property</h3>
+      <ul class="plain">
+        <li>Your survey as the background</li>
+        <li>Canopy and root zones drawn to scale</li>
+        <li>How much of a root zone the house or drive covers</li>
+        <li>Whether a tree is likely protected under Austin&rsquo;s rules</li>
+        <li>A printable schedule for the client</li>
+        <li>A spreadsheet export</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Using it on your phone</h2>
+  <p>Open this page on your phone and add it to your home screen. After that it opens like any
+     other app and works with no signal at all — useful on a property with poor reception.</p>
+  <ul class="plain">
+    <li><strong>iPhone:</strong> Share button, then <em>Add to Home Screen</em>.</li>
+    <li><strong>Android:</strong> open the app, go to the <em>Project</em> tab and press
+        <em>Install app</em>.</li>
+  </ul>
+  <p>Adding it to the home screen also tells the phone to hold on to your photos and recordings
+     properly, so it is worth doing before a real survey.</p>
+
+  <h2>Where your information goes</h2>
+  <div class="aside">
+    <p><strong>Nowhere.</strong> This page hands your phone the app and nothing else. There is no
+       account, no server, and no company holding your data.</p>
+    <p>Everything you record stays on the device you recorded it on, and in the
+       <code>.zip</code> files you save yourself. Because of that, the phone and the computer keep
+       separate copies — moving work between them means saving a package and opening it on the
+       other one.</p>
+  </div>
+
+  <h2>A few honest limits</h2>
+  <ul class="plain">
+    <li>The app tells you when a tree <em>looks</em> protected under Austin&rsquo;s rules, but that
+        is a prompt to check, not a ruling. Confirm anything that matters with the City Arborist.</li>
+    <li>Markers are placed by eye on your plan. That is fine for planning and for talking to an
+        arborist; it is not a surveyed position.</li>
+    <li>Saving your package is the real backup. Browser storage is durable, but it is not forever.</li>
+  </ul>
+
+  <p style="margin-top:34px">
+    <a class="cta" href="tree_plot_plan_editor.html" style="background:var(--green); color:#fff">
+      Open the app &rarr;</a>
+  </p>
+
+  <footer>
+    <p>Free and open source under the MIT licence.
+       <a href="https://github.com/MrStonerT/tree-inventory">Source code on GitHub</a>.</p>
+    <p>Needs a reasonably current browser — Chrome or Edge 80+, Safari 16.4+, Firefox 113+.</p>
+  </footer>
+</main>
+
 </body>
 </html>

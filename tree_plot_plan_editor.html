@@ -251,6 +251,27 @@ input[type=checkbox]{width:20px; height:20px; min-height:0; accent-color:var(--g
 .stat .n{font-size:21px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.15}
 .stat .k{font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em}
 
+/* ---- Recording ---------------------------------------------------------- */
+.recording-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:9px 12px; border-radius:var(--radius); background:#fdecea;
+  border:1px solid #f0b3ac; box-shadow:var(--shadow); font-size:13px}
+.recording-bar b{font-variant-numeric:tabular-nums; font-size:16px; color:#a5281c}
+.rec-dot{width:12px; height:12px; border-radius:50%; background:var(--hazard); flex:none;
+  animation:recpulse 1.4s ease-in-out infinite}
+@keyframes recpulse{0%,100%{opacity:1} 50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){ .rec-dot{animation:none} }
+/* A live level meter is the clearest possible answer to "is this actually on?" */
+.rec-level{display:inline-block; width:90px; height:8px; border-radius:4px;
+  background:#f3cdc8; overflow:hidden; flex:none}
+.rec-level > span{display:block; height:100%; width:0; background:var(--hazard);
+  border-radius:4px; transition:width .08s linear}
+
+.audio-item{display:flex; align-items:center; gap:9px; padding:9px 10px; margin-bottom:7px;
+  border:1px solid var(--line); border-radius:8px; background:#fbfcfb; flex-wrap:wrap}
+.audio-item .meta{font-size:12px; color:var(--ink-soft); flex:1; min-width:120px}
+.audio-item audio{width:100%; height:36px; margin-top:5px}
+.audio-item .dur{font-weight:700; font-variant-numeric:tabular-nums}
+
 /* ---- Status bar --------------------------------------------------------- */
 .statusbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:7px 11px;
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
@@ -543,6 +564,14 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
                 or draw on it to show where to cut.</p>
             </div>
 
+            <div class="section">
+              <h3>Voice notes</h3>
+              <p class="muted" style="margin:-4px 0 8px">Record the arborist talking about
+                this tree, then transcribe it later. Saved every few seconds as it records.</p>
+              <button id="btnRecTree" class="primary btn-sm">&#9679; Record for this tree</button>
+              <div id="treeAudioList" style="margin-top:9px"></div>
+            </div>
+
             <div class="section" id="treeLocationSection" hidden>
               <h3>Location from photos</h3>
               <p id="treeLocationText" class="muted"></p>
@@ -631,6 +660,15 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
             <button id="btnDeleteVisit" class="danger btn-sm">Delete this visit</button>
           </div>
           <div class="section">
+            <h3>Walk-through recording</h3>
+            <p class="muted" style="margin:-4px 0 8px">One long recording for the whole visit.
+              Start it when you set off and leave it running &mdash; audio is written to storage
+              every few seconds, so an interruption costs seconds rather than the whole take.</p>
+            <button id="btnRecVisit" class="primary btn-sm">&#9679; Record the walk-through</button>
+            <div id="visitAudioList" style="margin-top:9px"></div>
+          </div>
+
+          <div class="section">
             <h3>All visits</h3>
             <div id="visitList" class="list"></div>
           </div>
@@ -701,6 +739,16 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
   </div>
 
   <!-- ===================== Status bar =================== -->
+  <div id="recordingBar" class="recording-bar no-print" hidden>
+    <span class="rec-dot" aria-hidden="true"></span>
+    <b id="recTime">0:00</b>
+    <span id="recTarget" class="muted"></span>
+    <span class="rec-level" aria-hidden="true"><span id="recLevelFill"></span></span>
+    <span id="recSaved" class="muted"></span>
+    <span class="grow"></span>
+    <button id="btnRecStop" class="btn-sm">Stop &amp; save</button>
+  </div>
+
   <div class="statusbar no-print">
     <span id="statusMsg">Import a plot plan to begin.</span>
     <span class="grow"></span>
@@ -1063,6 +1111,7 @@ function blankProject() {
     activeVisitId: firstVisit.id,
     trees: [],
     structures: [],
+    recordings: [],
   };
 }
 
@@ -1233,6 +1282,7 @@ function normalizeV3(d) {
   out.visits     = Array.isArray(d.visits) && d.visits.length ? d.visits : [newVisit('Baseline survey')];
   out.trees      = Array.isArray(d.trees) ? d.trees : [];
   out.structures = Array.isArray(d.structures) ? d.structures : [];
+  out.recordings = Array.isArray(d.recordings) ? d.recordings : [];
 
   out.trees.forEach(t => {
     t.uid = t.uid || uid();
@@ -2428,6 +2478,392 @@ const Annot = {
   },
 };
 /* ============================================================================
+   6d. VOICE RECORDING
+
+   Record the arborist talking, transcribe it later. The recording is the easy
+   part; not losing an hour of it is the whole design.
+
+   How a long recording survives:
+
+   - MediaRecorder runs with a 5-second timeslice, so audio arrives in small
+     chunks rather than one blob at the end. Every chunk is written to IndexedDB
+     the moment it appears. Lose the tab, the battery, or the browser, and at most
+     the last five seconds are gone — never the hour.
+   - Chunks are stored under their own keys and stitched into one file only when
+     you stop. If the app reopens and finds orphaned chunks, it offers to recover
+     them: a WebM missing its final clusters still plays, because the header
+     arrived in chunk zero.
+   - A screen wake lock is held while recording, because a locked phone is the
+     most likely way an in-progress recording dies. It is re-acquired if the phone
+     is unlocked again.
+   - If the microphone track ends on its own — a phone call, another app taking
+     the mic — recording stops cleanly and keeps what it has rather than failing.
+
+   Bitrate is deliberately low: 32 kbps mono Opus is comfortably good for speech
+   and lands around 14 MB per hour, so a full walk-through is a reasonable thing
+   to carry inside a project package.
+   ========================================================================== */
+
+const AUDIO_BITS_PER_SECOND = 32000;
+const AUDIO_TIMESLICE_MS = 5000;      // how often audio is flushed to storage
+
+/* First supported wins. Safari does not do WebM, hence the mp4 fallbacks. */
+const AUDIO_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4;codecs=mp4a.40.2',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+];
+
+const Recorder = {
+  recorder: null,
+  stream: null,
+  session: null,        // { id, treeUid, visitId, startedAt, seq, bytes, mime }
+  ticker: null,
+  wakeLock: null,
+  audioCtx: null,
+  analyser: null,
+  levelFrame: null,
+  level: 0,
+
+  supported() {
+    return typeof MediaRecorder !== 'undefined'
+      && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      && !!AUDIO_MIME_CANDIDATES.find(m => MediaRecorder.isTypeSupported(m));
+  },
+
+  pickMime() {
+    return AUDIO_MIME_CANDIDATES.find(m => MediaRecorder.isTypeSupported(m)) || '';
+  },
+
+  extensionFor(mime) {
+    if (!mime) return 'webm';
+    if (mime.indexOf('mp4') >= 0) return 'm4a';
+    if (mime.indexOf('ogg') >= 0) return 'ogg';
+    return 'webm';
+  },
+
+  isRecording() { return !!this.recorder && this.recorder.state === 'recording'; },
+
+  chunkKey(id, seq) { return 'audiochunk:' + id + ':' + String(seq).padStart(6, '0'); },
+  fileKey(id)       { return 'audio:' + id; },
+
+  elapsedSec() {
+    if (!this.session) return 0;
+    return Math.max(0, Math.round((Date.now() - this.session.startedAt) / 1000));
+  },
+
+  /* -------- start / stop ---------------------------------------------------- */
+
+  /** @param target {treeUid?: string} — omit treeUid for a whole-visit recording. */
+  async start(target) {
+    if (this.isRecording()) return;
+    if (!this.supported()) {
+      setStatus('This browser cannot record audio.', 'err');
+      return;
+    }
+
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (err) {
+      setStatus(err && err.name === 'NotAllowedError'
+        ? 'Microphone permission was declined. Allow it in your browser settings to record.'
+        : 'Could not open the microphone: ' + ((err && err.message) || err), 'err');
+      return;
+    }
+
+    const mime = this.pickMime();
+    try {
+      this.recorder = new MediaRecorder(this.stream,
+        mime ? { mimeType: mime, audioBitsPerSecond: AUDIO_BITS_PER_SECOND }
+             : { audioBitsPerSecond: AUDIO_BITS_PER_SECOND });
+    } catch (err) {
+      this.releaseStream();
+      setStatus('Could not start recording: ' + ((err && err.message) || err), 'err');
+      return;
+    }
+
+    this.session = {
+      id: uid(),
+      treeUid: (target && target.treeUid) || null,
+      visitId: state.activeVisitId,
+      startedAt: Date.now(),
+      seq: 0,
+      bytes: 0,
+      mime: this.recorder.mimeType || mime,
+    };
+
+    /* Note the in-flight recording so a crashed session can be recovered. */
+    await Store.setMeta('recordingInFlight', {
+      id: this.session.id, treeUid: this.session.treeUid, visitId: this.session.visitId,
+      startedAt: new Date(this.session.startedAt).toISOString(), mime: this.session.mime,
+    });
+
+    this.recorder.ondataavailable = async event => {
+      if (!event.data || !event.data.size || !this.session) return;
+      const seq = this.session.seq++;
+      this.session.bytes += event.data.size;
+      try {
+        await Store.put(this.chunkKey(this.session.id, seq), event.data);
+      } catch (err) {
+        console.error('[audio] could not persist chunk', seq, err);
+        setStatus('Storage error while recording — stop and save soon.', 'err');
+      }
+    };
+    this.recorder.onerror = event => {
+      console.error('[audio] recorder error', event);
+      setStatus('Recording stopped unexpectedly. Audio captured so far was kept.', 'err');
+      this.stop();
+    };
+
+    /* A track ending by itself means an interruption (call, another app taking the
+       mic). Finish cleanly rather than dying and losing the take. */
+    this.stream.getAudioTracks().forEach(track => {
+      track.onended = () => {
+        if (this.isRecording()) {
+          setStatus('Microphone was interrupted — recording saved up to that point.', 'err');
+          this.stop();
+        }
+      };
+    });
+
+    this.recorder.start(AUDIO_TIMESLICE_MS);
+    this.startLevelMeter();
+    await this.acquireWakeLock();
+
+    this.ticker = setInterval(() => renderRecordingBar(), 1000);
+    renderRecordingBar();
+    render();
+    setStatus('Recording. Audio is written to storage every '
+      + (AUDIO_TIMESLICE_MS / 1000) + ' seconds, so a crash costs seconds, not the whole take.');
+  },
+
+  async stop() {
+    if (!this.recorder) return;
+    const recorder = this.recorder;
+    const session = this.session;
+
+    /* Wait for the final dataavailable so the last partial chunk is persisted. */
+    await new Promise(resolve => {
+      recorder.onstop = resolve;
+      try { recorder.stop(); } catch (err) { resolve(); }
+    });
+
+    this.stopLevelMeter();
+    this.releaseStream();
+    clearInterval(this.ticker);
+    this.ticker = null;
+    this.recorder = null;
+    this.session = null;
+    await this.releaseWakeLock();
+
+    if (session) await this.finalize(session);
+    renderRecordingBar();
+    render();
+  },
+
+  /** Stitch the chunks into one file and register it on the project. */
+  async finalize(session) {
+    try {
+      const parts = [];
+      for (let i = 0; i < session.seq; i++) {
+        const chunk = await Store.get(this.chunkKey(session.id, i));
+        if (chunk) parts.push(chunk);
+      }
+      if (!parts.length) {
+        setStatus('Nothing was captured — recording discarded.', 'err');
+        await Store.setMeta('recordingInFlight', null);
+        return;
+      }
+
+      const blob = new Blob(parts, { type: session.mime || 'audio/webm' });
+      await Store.put(this.fileKey(session.id), blob);
+      for (let i = 0; i < session.seq; i++) await Store.del(this.chunkKey(session.id, i));
+      await Store.setMeta('recordingInFlight', null);
+
+      const durationSec = Math.max(1, Math.round((Date.now() - session.startedAt) / 1000));
+      const before = snapshot();
+      state.recordings.push({
+        id: session.id,
+        file: this.filenameFor(session, durationSec),
+        treeUid: session.treeUid,
+        visitId: session.visitId,
+        startedAt: new Date(session.startedAt).toISOString(),
+        durationSec: durationSec,
+        bytes: blob.size,
+        mime: session.mime || 'audio/webm',
+        label: '',
+      });
+      commit(before);
+      setStatus('Saved ' + fmtDuration(durationSec) + ' of audio (' + fmtBytes(blob.size) + ').');
+    } catch (err) {
+      console.error('[audio] finalize failed', err);
+      setStatus('Could not save the recording: ' + ((err && err.message) || err), 'err');
+    }
+  },
+
+  /** A filename someone can make sense of inside the ZIP. */
+  filenameFor(session, durationSec) {
+    const ext = this.extensionFor(session.mime);
+    const tree = session.treeUid ? treeByUid(session.treeUid) : null;
+    const who = tree ? 'tree-' + slug(tree.treeId) : 'walkthrough';
+    const when = new Date(session.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    return 'audio/' + who + '-' + when + '-' + fmtDuration(durationSec).replace(/:/g, 'm') + '.' + ext;
+  },
+
+  async remove(recordingId) {
+    const i = state.recordings.findIndex(r => r.id === recordingId);
+    if (i < 0) return;
+    state.recordings.splice(i, 1);
+    /* Blob is left in storage so undo can restore the entry, exactly as photos do. */
+  },
+
+  /* -------- crash recovery -------------------------------------------------- */
+
+  /**
+   * Orphaned chunks mean a recording was cut short. Rescue it AUTOMATICALLY.
+   *
+   * Deliberately not a prompt. Recovering an unwanted recording costs a tap to
+   * delete; declining a wanted one destroys an hour of irreplaceable audio that
+   * was captured standing under a tree with an arborist. Those risks are not
+   * remotely symmetric, so this never asks — it recovers and says so, and the
+   * entry can be deleted like any other.
+   */
+  async recoverInterrupted() {
+    try {
+      const flight = await Store.getMeta('recordingInFlight');
+      if (!flight || !flight.id) return;
+
+      const parts = [];
+      for (let i = 0; i < 100000; i++) {
+        const chunk = await Store.get(this.chunkKey(flight.id, i));
+        if (!chunk) break;
+        parts.push(chunk);
+      }
+      if (!parts.length) { await Store.setMeta('recordingInFlight', null); return; }
+
+      const blob = new Blob(parts, { type: flight.mime || 'audio/webm' });
+      const approxSec = Math.max(1, Math.round(parts.length * (AUDIO_TIMESLICE_MS / 1000)));
+
+      await Store.put(this.fileKey(flight.id), blob);
+      for (let i = 0; i < parts.length; i++) await Store.del(this.chunkKey(flight.id, i));
+      await Store.setMeta('recordingInFlight', null);
+
+      /* After a crash the project may have reloaded blank, or from an autosave that
+         predates the tree or visit this was recorded against. Re-point anything that
+         no longer resolves at the current visit, otherwise the recovered audio would
+         be filed under an id nothing matches and never appear in the UI at all. */
+      const treeStillExists = flight.treeUid && state.trees.some(t => t.uid === flight.treeUid);
+      const visitStillExists = flight.visitId && state.visits.some(v => v.id === flight.visitId);
+      const orphaned = (flight.treeUid && !treeStillExists) || !visitStillExists;
+
+      state.recordings.push({
+        id: flight.id,
+        file: this.filenameFor({ id: flight.id, treeUid: treeStillExists ? flight.treeUid : null,
+                                 startedAt: new Date(flight.startedAt).getTime(),
+                                 mime: flight.mime }, approxSec),
+        treeUid: treeStillExists ? flight.treeUid : null,
+        visitId: visitStillExists ? flight.visitId : state.activeVisitId,
+        startedAt: flight.startedAt,
+        durationSec: approxSec,
+        bytes: blob.size,
+        mime: flight.mime || 'audio/webm',
+        label: orphaned
+          ? 'Recovered after interruption — original tree/visit no longer in this project'
+          : 'Recovered after interruption',
+      });
+      dirty = true;
+      render();          // the entry must appear immediately, not on the next repaint
+      setStatus('Recovered ' + fmtDuration(approxSec) + ' of audio from an interrupted '
+        + 'recording (' + fmtBytes(blob.size) + '). It is in the '
+        + (flight.treeUid ? 'tree’s voice notes' : 'Visits tab') + ' — delete it if you '
+        + 'do not want it.');
+    } catch (err) {
+      console.warn('[audio] recovery failed', err);
+    }
+  },
+
+  /* -------- wake lock, level meter, teardown -------------------------------- */
+
+  async acquireWakeLock() {
+    try {
+      if (!navigator.wakeLock) return;
+      this.wakeLock = await navigator.wakeLock.request('screen');
+      this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
+    } catch (err) { /* not fatal — recording still runs */ }
+  },
+
+  async releaseWakeLock() {
+    try { if (this.wakeLock) await this.wakeLock.release(); } catch (e) {}
+    this.wakeLock = null;
+  },
+
+  startLevelMeter() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      this.audioCtx = new Ctx();
+      const source = this.audioCtx.createMediaStreamSource(this.stream);
+      this.analyser = this.audioCtx.createAnalyser();
+      this.analyser.fftSize = 256;
+      source.connect(this.analyser);
+
+      const buffer = new Uint8Array(this.analyser.fftSize);
+      const tick = () => {
+        if (!this.analyser) return;
+        this.analyser.getByteTimeDomainData(buffer);
+        let sum = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          const v = (buffer[i] - 128) / 128;
+          sum += v * v;
+        }
+        this.level = Math.min(1, Math.sqrt(sum / buffer.length) * 3.2);
+        const bar = $('#recLevelFill');
+        if (bar) bar.style.width = Math.round(this.level * 100) + '%';
+        this.levelFrame = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) { /* meter is reassurance, not a requirement */ }
+  },
+
+  stopLevelMeter() {
+    if (this.levelFrame) cancelAnimationFrame(this.levelFrame);
+    this.levelFrame = null;
+    this.analyser = null;
+    if (this.audioCtx) { try { this.audioCtx.close(); } catch (e) {} }
+    this.audioCtx = null;
+    this.level = 0;
+  },
+
+  releaseStream() {
+    if (this.stream) this.stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+    this.stream = null;
+  },
+
+  totalBytes() {
+    return state.recordings.reduce((sum, r) => sum + (r.bytes || 0), 0);
+  },
+};
+
+/** Seconds -> m:ss, or h:mm:ss past an hour. */
+function fmtDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return hours ? hours + ':' + pad(minutes) + ':' + pad(seconds)
+               : minutes + ':' + pad(seconds);
+}
+/* ============================================================================
    7. ZIP READER / WRITER
    A real ZIP, written by hand against the PKZIP APPNOTE spec. No libraries:
    compression comes from the platform's own CompressionStream('deflate-raw').
@@ -3534,6 +3970,9 @@ function renderTreeEditor(tree) {
 
   renderOrdinance(tree);
   renderPhotoGrid(tree);
+  renderAudioList('#treeAudioList', r => r.treeUid === tree.uid,
+    'No voice notes for this tree yet.');
+  $('#btnRecTree').disabled = Recorder.isRecording();
   renderTreeLocation(tree);
   renderObsHistory(tree);
   renderNoteHistory(tree);
@@ -3828,6 +4267,62 @@ function renderExifPanel(photo) {
   $('#exifPanel').innerHTML = html;
 }
 
+/* -------- Voice recordings --------------------------------------------------- */
+
+/**
+ * Render the recordings belonging to a tree, or the whole-visit ones.
+ * @param filter fn(recording) -> boolean
+ */
+async function renderAudioList(hostSelector, filter, emptyText) {
+  const host = $(hostSelector);
+  if (!host) return;
+  const items = state.recordings.filter(filter)
+    .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+
+  if (!items.length) {
+    host.innerHTML = '<p class="empty-note" style="padding:2px 0">' + esc(emptyText) + '</p>';
+    return;
+  }
+
+  host.innerHTML = items.map(r =>
+    '<div class="audio-item" data-rec="' + esc(r.id) + '">'
+    + '<span class="dur">' + esc(fmtDuration(r.durationSec)) + '</span>'
+    + '<span class="meta">' + esc(fmtDateTime(r.startedAt)) + ' · ' + esc(fmtBytes(r.bytes))
+    + (r.label ? ' · ' + esc(r.label) : '') + '</span>'
+    + '<button class="btn-sm danger" data-rec-remove="' + esc(r.id) + '">Delete</button>'
+    + '<audio controls preload="none" data-rec-audio="' + esc(r.id) + '"></audio>'
+    + '</div>').join('');
+
+  /* Object URLs are created lazily so a project with many recordings does not
+     hold them all open at once. */
+  for (const r of items) {
+    const url = await Photos.url(Recorder.fileKey(r.id));
+    const el = host.querySelector('[data-rec-audio="' + r.id + '"]');
+    if (el && url) el.src = url;
+  }
+}
+
+/** The always-visible bar shown while recording. */
+function renderRecordingBar() {
+  const bar = $('#recordingBar');
+  if (!bar) return;
+  const live = Recorder.isRecording();
+  bar.hidden = !live;
+  if (!live) return;
+
+  const session = Recorder.session;
+  const tree = session && session.treeUid ? treeByUid(session.treeUid) : null;
+  $('#recTime').textContent = fmtDuration(Recorder.elapsedSec());
+  $('#recTarget').textContent = tree
+    ? 'Tree ' + tree.treeId + (tree.species ? ' · ' + tree.species : '')
+    : 'Walk-through';
+  const chunks = session ? session.seq : 0;
+  $('#recSaved').textContent = chunks
+    ? 'saved through ' + fmtDuration(chunks * (AUDIO_TIMESLICE_MS / 1000))
+      + ' · ' + fmtBytes(session.bytes)
+    : 'starting…';
+}
+
 /* -------- Tree location, averaged from photo GPS ---------------------------- */
 
 function renderTreeLocation(tree) {
@@ -3987,6 +4482,10 @@ function renderVisitPanel() {
   }
   $('#btnDeleteVisit').disabled = state.visits.length <= 1;
 
+  renderAudioList('#visitAudioList', r => !r.treeUid && r.visitId === state.activeVisitId,
+    'No walk-through recording for this visit yet.');
+  $('#btnRecVisit').disabled = Recorder.isRecording();
+
   $('#visitList').innerHTML = visits.slice().reverse().map(vv => {
     const n = state.trees.reduce((c, t) => c + (t.observations.some(o => o.visitId === vv.id) ? 1 : 0), 0);
     return '<div class="list-item' + (vv.id === state.activeVisitId ? ' selected' : '') + '"'
@@ -4096,7 +4595,12 @@ function renderSummary() {
 
 function renderStorageStatus() {
   const bytes = Photos.totalBytes();
-  const parts = [Photos.count() + ' photos, about ' + fmtBytes(bytes) + ' in the package.'];
+  const audioBytes = Recorder.totalBytes();
+  const parts = [Photos.count() + ' photos'
+    + (state.recordings.length
+        ? ' and ' + state.recordings.length + ' recording'
+          + (state.recordings.length === 1 ? '' : 's') : '')
+    + ', about ' + fmtBytes(bytes + audioBytes) + ' in the package.'];
 
   if (Store.mode === 'idb') {
     parts.push('Photos persist in this browser between sessions.');
@@ -4275,6 +4779,15 @@ async function savePackage() {
       }
     }
 
+    /* Voice recordings. Opus/AAC are already compressed, so store rather than deflate. */
+    let audioMissing = 0;
+    for (const rec of state.recordings) {
+      const blob = await Store.get(Recorder.fileKey(rec.id));
+      if (blob) entries.push({ name: rec.file, data: blob, compress: false });
+      else audioMissing++;
+    }
+    missing += audioMissing;
+
     entries.unshift({ name: 'project.json', data: JSON.stringify(clone, null, 2), compress: true });
     entries.push({ name: 'README.txt', data: packageReadme(), compress: true });
 
@@ -4309,6 +4822,8 @@ function packageReadme() {
     'CONTENTS',
     '  project.json   All tree data, observations, visits, and layout geometry.',
     '  plan.*         The plot plan survey image used as the base layer.',
+    '  audio/         Voice recordings, named by tree and date. Feed these straight',
+    '                 into a transcription tool.',
     '  photos/        Tree photos, one folder per tree, named by photo id.',
     '                 A "-marked.jpg" copy sits beside any photo that has cut lines or',
     '                 other marks drawn on it, so they are visible without the app.',
@@ -4379,8 +4894,21 @@ async function openZip(file) {
       restored++;
     }
   }
+  /* Voice recordings travel in the same archive. */
+  let restoredAudio = 0;
+  for (const rec of (next.recordings || [])) {
+    const bytes = files.get(rec.file);
+    if (!bytes) continue;
+    await Store.put(Recorder.fileKey(rec.id),
+      new Blob([bytes], { type: rec.mime || 'audio/webm' }));
+    restoredAudio++;
+  }
+
   state = next;
-  if (restored) setStatus('Restored ' + restored + ' photos.');
+  if (restored || restoredAudio) {
+    setStatus('Restored ' + restored + ' photos'
+      + (restoredAudio ? ' and ' + restoredAudio + ' recordings' : '') + '.');
+  }
 }
 
 async function openJson(file) {
@@ -4391,6 +4919,8 @@ async function openJson(file) {
      UI does not promise photos it cannot show. */
   let dropped = 0;
   next.trees.forEach(t => { dropped += t.photos.length; t.photos = []; });
+  dropped += (next.recordings || []).length;
+  next.recordings = [];
   state = next;
   if (dropped) {
     setStatus('Opened, but ' + dropped + ' photo reference(s) were dropped — '
@@ -5136,6 +5666,45 @@ function wireEvents() {
     clearOverlay();
   });
 
+  /* --- voice recording --- */
+  $('#btnRecTree').onclick = () => {
+    const tree = selectedTree();
+    if (!tree) return;
+    Recorder.start({ treeUid: tree.uid });
+  };
+  $('#btnRecVisit').onclick = () => Recorder.start({});
+  $('#btnRecStop').onclick = () => Recorder.stop();
+
+  /* Recording rows are rebuilt on render, so bind by delegation on the panels. */
+  const audioClick = async e => {
+    const remove = e.target.closest('[data-rec-remove]');
+    if (!remove) return;
+    const id = remove.getAttribute('data-rec-remove');
+    const rec = state.recordings.find(r => r.id === id);
+    if (!rec) return;
+    if (!confirm('Delete this ' + fmtDuration(rec.durationSec) + ' recording?')) return;
+    const before = snapshot();
+    await Recorder.remove(id);
+    commit(before);
+  };
+  $('#treeAudioList').addEventListener('click', audioClick);
+  $('#visitAudioList').addEventListener('click', audioClick);
+
+  /* Losing a long recording to a stray back-swipe would be the worst outcome here. */
+  window.addEventListener('beforeunload', e => {
+    if (!Recorder.isRecording()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
+  /* A screen wake lock is dropped when the page is hidden; take it back so a
+     long recording does not die the moment the phone is glanced at. */
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Recorder.isRecording() && !Recorder.wakeLock) {
+      Recorder.acquireWakeLock();
+    }
+  });
+
   /* --- offline & install --- */
   window.addEventListener('beforeinstallprompt', e => {
     /* Suppress the browser's own bar so the offer appears where it makes sense,
@@ -5236,6 +5805,11 @@ async function init() {
   const mode = await Store.init();
   await refreshPersistence();
   await offerRecovery();
+  await Recorder.recoverInterrupted();
+
+  if (!Recorder.supported()) {
+    ['#btnRecTree', '#btnRecVisit'].forEach(sel => { $(sel).hidden = true; });
+  }
 
   setTool('select');
   showTab('Selected');
