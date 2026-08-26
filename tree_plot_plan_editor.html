@@ -287,19 +287,39 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
 #exifPanel .gps{background:#f6f9f6; border-left:3px solid var(--green); padding:7px 9px;
   border-radius:0 6px 6px 0; margin-top:9px}
 
-/* ---- Responsive: phone/tablet field use --------------------------------- */
-@media (max-width:900px){
+/* ---- Responsive: phone / foldable / tablet field use --------------------- */
+
+/* Mid-width: an unfolded foldable (a Pixel Fold's inner screen is ~841 CSS px) or a
+   small tablet. Keep BOTH panes visible — seeing the plan and the form at once is
+   the whole point of the big screen — but narrow the sidebar so the map keeps room. */
+@media (max-width:1100px){
+  .layout{grid-template-columns:minmax(0,1fr) 330px}
+}
+@media (max-width:940px){
+  .layout{grid-template-columns:minmax(0,1fr) 300px}
+  .masthead .sub{display:none}
+  .grid3{grid-template-columns:1fr 1fr}
+}
+
+/* Narrow: a phone, or a foldable while closed. Single column. */
+@media (max-width:820px){
   :root{--tap:48px}
   /* Respect the notch and home indicator when installed to a phone home screen. */
   .app{gap:7px; height:auto; min-height:100dvh;
     padding:7px max(7px,env(safe-area-inset-right)) max(7px,env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left))}
   .layout{grid-template-columns:1fr; height:auto}
-  #view{height:56vh}
+  /* flex:none matters — `flex:1` implies flex-basis:0, which beats `height` on the
+     main axis and collapsed the map to its min-height instead of the 56vh intended. */
+  #view{flex:none; height:56vh; min-height:320px}
   .side{max-height:none; overflow:visible}
   .masthead h1{font-size:17px}
-  .masthead .sub{display:none}
-  .grid3{grid-template-columns:1fr 1fr}
   .list{max-height:none}
+}
+
+/* Short and wide — a foldable held in landscape. Reclaim vertical space. */
+@media (max-height:560px) and (min-width:821px){
+  .masthead{display:none}
+  #view{min-height:200px}
 }
 
 /* ---- Print: client-facing report ---------------------------------------- */
@@ -5037,7 +5057,26 @@ function wireEvents() {
     e.returnValue = '';
   });
 
-  window.addEventListener('resize', debounce(render, 150));
+  /* Viewport changes.
+     Unfolding a foldable or rotating the device changes the window so drastically
+     that the old pan/zoom leaves the plan parked half off-screen. Re-fit in that
+     case so you are always looking at the whole property.
+     Deliberately keyed on WIDTH only: an on-screen keyboard shrinks the height a
+     long way, and re-fitting the plan out from under someone mid-edit would be
+     worse than doing nothing. */
+  let lastWindowWidth = window.innerWidth;
+  window.addEventListener('resize', debounce(() => {
+    const width = window.innerWidth;
+    /* Measure the WINDOW, not the map pane. Crossing the single/two-column
+       breakpoint makes the map pane wider even as the window shrinks, so its width
+       is a poor signal — folding a Pixel Fold moves the window 841 -> 428 px while
+       the map only moves 509 -> 395. */
+    const changedALot = lastWindowWidth > 0
+      && Math.abs(width - lastWindowWidth) / lastWindowWidth > 0.2;
+    lastWindowWidth = width;
+    if (changedALot && state.background.dataUrl) fitToView();
+    else render();
+  }, 180));
 }
 
 /**
