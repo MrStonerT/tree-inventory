@@ -1381,38 +1381,52 @@ function multiTrunkDiameter(trunks) {
   return Math.round(total * 10) / 10;
 }
 
-/** Circumference (in) -> diameter (in), how the City tells you to measure. */
+/**
+ * Circumference (in) -> diameter (in).
+ *
+ * Kept at 4 decimal places, NOT rounded to 0.1 like a displayed diameter.
+ * Rounding the stored diameter to 0.1" quantises circumference into steps of
+ * 0.1 x pi = 0.314", so a typed 45" came back as 44.9" and 45.1" came back as
+ * 45.2". Storing the diameter finely and rounding only for display means what you
+ * type is what you see.
+ */
 function circumferenceToDiameter(circumferenceIn) {
   const c = Number(circumferenceIn);
   if (!Number.isFinite(c) || c <= 0) return null;
-  return Math.round((c / Math.PI) * 10) / 10;
+  return Math.round((c / Math.PI) * 10000) / 10000;
 }
 
-/** Diameter (in) -> circumference (in). */
+/** Diameter (in) -> circumference (in), rounded for display. */
 function diameterToCircumference(diameterIn) {
   const d = Number(diameterIn);
   if (!Number.isFinite(d) || d <= 0) return null;
   return Math.round(d * Math.PI * 10) / 10;
 }
 
+/** Inches rounded for display. 0.1" is already finer than a trunk gets measured. */
+function fmtIn(value) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '';
+  return Math.round(n * 10) / 10;
+}
+
 /**
  * Convert a stored diameter into whatever the observation is being entered in.
- *
  * Only diameters are ever stored, so switching modes is purely presentational.
- * Both directions round to 0.1", which converges rather than drifting: type 60"
- * around, store 19.1" across, show 60.0" back, retype 60.0" -> still 19.1".
  */
 function toDisplayValue(diameterIn, mode) {
   if (diameterIn == null) return '';
   return mode === 'circumference'
     ? diameterToCircumference(diameterIn)
-    : Math.round(diameterIn * 10) / 10;
+    : fmtIn(diameterIn);
 }
 
 /** The inverse: what the user typed, back to a stored diameter. */
 function fromDisplayValue(entered, mode) {
   const v = Number(entered);
   if (!Number.isFinite(v) || v <= 0) return null;
+  /* A typed diameter is honoured exactly; a typed circumference keeps the extra
+     precision so it can be shown back unchanged. */
   return mode === 'circumference'
     ? circumferenceToDiameter(v)
     : Math.round(v * 10) / 10;
@@ -1471,7 +1485,7 @@ function classifyTree(tree) {
 
   const heritage = matchSpecies(tree, rules.heritageSpecies);
   if (heritage && diameter >= rules.heritageThresholdIn) {
-    reasons.push(heritage.label + ' at ' + diameter + '" meets the '
+    reasons.push(heritage.label + ' at ' + fmtIn(diameter) + '" meets the '
       + rules.heritageThresholdIn + '" Heritage threshold.');
     if (heritage.disputed) {
       reasons.push('Note: ' + heritage.label + ' appears on some published lists of the '
@@ -1483,7 +1497,7 @@ function classifyTree(tree) {
   const type = state.project.propertyType === 'commercial' ? 'commercial' : 'residential';
   const threshold = rules.protectedThresholdIn[type];
   if (diameter >= threshold) {
-    reasons.push(diameter + '" meets the ' + threshold + '" Protected threshold for '
+    reasons.push(fmtIn(diameter) + '" meets the ' + threshold + '" Protected threshold for '
       + type + ' property.');
     if (heritage) {
       reasons.push('A ' + heritage.label + ' becomes Heritage at '
@@ -1493,7 +1507,7 @@ function classifyTree(tree) {
     return { level: 'protected', diameter: diameter, reasons: reasons, verify: true };
   }
 
-  reasons.push(diameter + '" is below the ' + threshold + '" Protected threshold for '
+  reasons.push(fmtIn(diameter) + '" is below the ' + threshold + '" Protected threshold for '
     + type + ' property.');
   return { level: 'none', diameter: diameter, reasons: reasons, verify: false };
 }
@@ -3505,7 +3519,7 @@ function renderTreeEditor(tree) {
     : (mode === 'circumference' ? 'Circumference (in)' : 'Diameter (in)');
 
   const dbhText = multi
-    ? (shown && shown.dbhIn != null ? Math.round(shown.dbhIn * 10) / 10 : '')
+    ? (shown && shown.dbhIn != null ? fmtIn(shown.dbhIn) : '')
     : toDisplayValue(shown && shown.dbhIn, mode);
   if (forceMeasureRefresh) dbhInput.value = dbhText === null ? '' : String(dbhText);
   else setValue(dbhInput, dbhText);
@@ -3866,7 +3880,7 @@ function renderObsHistory(tree) {
     const cond = conditionMeta(o.condition);
 
     const rows = [];
-    if (o.dbhIn    != null) rows.push(['DBH', o.dbhIn + '"' + deltaHtml(o.dbhIn, prev && prev.dbhIn, 'in')]);
+    if (o.dbhIn    != null) rows.push(['DBH', fmtIn(o.dbhIn) + '"' + deltaHtml(o.dbhIn, prev && prev.dbhIn, 'in')]);
     if (o.heightFt != null) rows.push(['Height', o.heightFt + ' ft' + deltaHtml(o.heightFt, prev && prev.heightFt, 'ft')]);
     if (o.spreadFt != null) rows.push(['Spread', o.spreadFt + ' ft' + deltaHtml(o.spreadFt, prev && prev.spreadFt, 'ft')]);
     if (o.condition && o.condition !== 'Unassessed') rows.push(['Condition', esc(o.condition)]);
@@ -3936,7 +3950,7 @@ function renderTreeList() {
     const cond = conditionMeta(o && o.condition);
     const bits = [
       t.species || 'Species not set',
-      o && o.dbhIn != null ? o.dbhIn + '" DBH' : null,
+      o && o.dbhIn != null ? fmtIn(o.dbhIn) + '" DBH' : null,
       o && o.priority && o.priority !== 'Not set' ? o.priority : null,
       t.photos.length ? t.photos.length + ' photo' + (t.photos.length > 1 ? 's' : '') : null,
     ].filter(Boolean);
@@ -4409,9 +4423,9 @@ function exportCsv() {
       const stems = (o.trunks || []).filter(n => Number.isFinite(n));
       return [
         t.treeId, t.species, t.botanical, t.status, t.protected ? 'Yes' : 'No',
-        o.dbhIn,
+        fmtIn(o.dbhIn),
         stems.length > 1 ? stems.length : '',
-        stems.length > 1 ? stems.join(' + ') : '',
+        stems.length > 1 ? stems.map(fmtIn).join(' + ') : '',
         status ? ORDINANCE_LABELS[status.level] : '',
         crz == null ? '' : Math.round(crz * 10) / 10,
         impact ? Math.round(impact.fraction * 100) : '',
@@ -4459,8 +4473,8 @@ function buildPrintReport() {
         + '<td>' + esc(t.treeId) + '</td>'
         + '<td>' + esc(t.species || '—')
           + (t.botanical ? '<br><i>' + esc(t.botanical) + '</i>' : '') + '</td>'
-        + '<td>' + (o.dbhIn != null ? esc(o.dbhIn) : '—')
-          + (stems.length > 1 ? '<br><span style="font-size:9px">' + esc(stems.join(' + '))
+        + '<td>' + (o.dbhIn != null ? esc(fmtIn(o.dbhIn)) : '—')
+          + (stems.length > 1 ? '<br><span style="font-size:9px">' + esc(stems.map(fmtIn).join(' + '))
              + ' (' + stems.length + ' stems)</span>' : '') + '</td>'
         + '<td>' + (status ? esc(ORDINANCE_LABELS[status.level]) : '—') + '</td>'
         + '<td>' + (crz == null ? '—' : esc(Math.round(crz * 10) / 10)) + '</td>'
