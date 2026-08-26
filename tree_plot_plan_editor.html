@@ -114,13 +114,20 @@ button:disabled:hover{background:var(--panel)}
 /* ---- SVG map elements --------------------------------------------------- */
 .canopy{fill:currentColor; fill-opacity:.17; stroke:currentColor; stroke-opacity:.5; pointer-events:none}
 .tree-marker{cursor:pointer}
-.tree-dot{stroke:#fff; stroke-width:2.5; fill:currentColor}
+/* Transparent rather than fill:none — fill:none would not receive pointer events,
+   which is the whole point of this circle. */
+.tree-hit{fill:transparent; stroke:none; pointer-events:all}
+/* non-scaling-stroke keeps outlines a constant screen width, matching the
+   counter-scaled marker radii set in renderTrees(). Font sizes are set inline there
+   for the same reason. */
+.tree-dot{stroke:#fff; stroke-width:2.5; fill:currentColor; vector-effect:non-scaling-stroke}
 .tree-marker.selected .tree-dot{stroke:var(--accent); stroke-width:4}
-.tree-label{font-size:11px; font-weight:700; fill:#fff; text-anchor:middle;
+.tree-label{font-weight:700; fill:#fff; text-anchor:middle;
   dominant-baseline:central; pointer-events:none; paint-order:stroke;
-  stroke:rgba(0,0,0,.35); stroke-width:2.5px}
-.tree-caption{font-size:10px; fill:var(--ink); text-anchor:middle; pointer-events:none;
-  paint-order:stroke; stroke:#fff; stroke-width:3px; font-weight:600}
+  stroke:rgba(0,0,0,.4); stroke-width:3px; vector-effect:non-scaling-stroke}
+.tree-caption{fill:var(--ink); text-anchor:middle; pointer-events:none;
+  paint-order:stroke; stroke:#fff; stroke-width:3px; font-weight:600;
+  vector-effect:non-scaling-stroke}
 .cond-good{color:var(--good)} .cond-fair{color:var(--fair)} .cond-poor{color:var(--poor)}
 .cond-hazard{color:var(--hazard)} .cond-unknown{color:var(--unknown)}
 .tree-marker.removed{opacity:.45}
@@ -2566,6 +2573,19 @@ const ZIP = (function () {
 const VB_WIDTH = 1000;
 const DEFAULT_ASPECT = 1.25;
 
+/* Tree marker sizing, in SCREEN PIXELS.
+   Markers are counter-scaled every render so they hold a constant size on screen no
+   matter the zoom — the way a map pin behaves. Sizing them in viewBox units instead
+   would make them shrink with the plan: on a tall survey fitted to the window they
+   came out around 7px across, far too small to hit.
+   Canopy and root-zone circles are deliberately NOT counter-scaled — those represent
+   real distances on the ground and must scale with the plan. */
+const MARKER_MIN_PX = 11;    // smallest dot radius on screen
+const MARKER_MAX_PX = 20;    // cap, so a huge tree does not swamp the plan
+const MARKER_HIT_PX = 12;    // invisible tap margin around the dot
+const LABEL_PX = 13;
+const CAPTION_PX = 11;
+
 function planAspect() {
   const bg = state.background;
   return (bg.width && bg.height) ? bg.height / bg.width : DEFAULT_ASPECT;
@@ -2576,6 +2596,13 @@ const vbHeight = () => VB_WIDTH * planAspect();
 /** Normalized → viewBox units. */
 const vbX = x => x * VB_WIDTH;
 const vbY = y => y * vbHeight();
+
+/** viewBox units per on-screen pixel at the current zoom. Multiply a pixel size by
+    this to get a viewBox size that renders at exactly that many screen pixels. */
+function vbPerScreenPx() {
+  const widthPx = planPixelSize().w * state.view.zoom;
+  return widthPx > 0 ? VB_WIDTH / widthPx : 1;
+}
 
 /** Distance between two normalized points, in viewBox units. */
 function vbDistance(x1, y1, x2, y2) {
@@ -2822,6 +2849,9 @@ function renderTrees() {
   const g = $('#gTrees');
   if (!state.layers.trees) { g.innerHTML = ''; return; }
 
+  /* One conversion for the whole pass: screen px -> viewBox units at this zoom. */
+  const k = vbPerScreenPx();
+
   let html = '';
   state.trees.forEach(t => {
     const isSel = selection && selection.type === 'tree' && selection.uid === t.uid;
@@ -2829,20 +2859,28 @@ function renderTrees() {
     const cls = conditionMeta(obs && obs.condition).cls;
     const cx = vbX(t.x), cy = vbY(t.y);
 
-    /* Marker grows a little with trunk size so big trees read as big at a glance. */
+    /* Marker grows a little with trunk size so big trees read as big at a glance,
+       but the growth is in screen pixels and capped. */
     const dbh = obs && obs.dbhIn ? obs.dbhIn : 0;
-    const r = clamp(7 + Math.sqrt(dbh) * 0.9, 7, 16);
+    const rPx = clamp(MARKER_MIN_PX + Math.sqrt(dbh) * 0.85, MARKER_MIN_PX, MARKER_MAX_PX);
+    const r = rPx * k;
 
     html += '<g class="tree-marker ' + cls + (isSel ? ' selected' : '')
           + (t.status === 'Removed' ? ' removed' : '') + '"'
           + ' data-type="tree" data-uid="' + esc(t.uid) + '">'
-          + '<circle class="tree-dot" cx="' + cx + '" cy="' + cy + '" r="' + r.toFixed(1) + '"/>';
+          /* Invisible, generously sized hit target drawn first so the visible dot
+             sits on top. This is what makes a marker easy to hit with a fingertip
+             without having to inflate the graphic itself. */
+          + '<circle class="tree-hit" cx="' + cx + '" cy="' + cy
+          + '" r="' + ((rPx + MARKER_HIT_PX) * k).toFixed(2) + '"/>'
+          + '<circle class="tree-dot" cx="' + cx + '" cy="' + cy + '" r="' + r.toFixed(2) + '"/>';
 
     if (state.layers.labels) {
-      html += '<text class="tree-label" x="' + cx + '" y="' + cy + '">' + esc(t.treeId) + '</text>';
+      html += '<text class="tree-label" x="' + cx + '" y="' + cy
+            + '" font-size="' + (LABEL_PX * k).toFixed(2) + '">' + esc(t.treeId) + '</text>';
       if (t.species) {
-        html += '<text class="tree-caption" x="' + cx + '" y="' + (cy + r + 11).toFixed(1) + '">'
-              + esc(t.species) + '</text>';
+        html += '<text class="tree-caption" x="' + cx + '" y="' + (cy + r + CAPTION_PX * k).toFixed(2)
+              + '" font-size="' + (CAPTION_PX * k).toFixed(2) + '">' + esc(t.species) + '</text>';
       }
     }
     html += '</g>';

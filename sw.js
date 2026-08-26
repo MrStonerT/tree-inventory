@@ -16,7 +16,7 @@
    yourself, or stale builds will keep being served.
    ========================================================================== */
 
-const CACHE_VERSION = 'v-08e077a49d';
+const CACHE_VERSION = 'v-f6f2256a74';
 const CACHE_NAME = 'arborist-shell-' + CACHE_VERSION;
 
 /* Relative paths so the app works from any host and any subdirectory
