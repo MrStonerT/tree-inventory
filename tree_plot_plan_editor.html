@@ -2670,6 +2670,9 @@ function planPixelSize() {
 /** Convert a pointer event to normalized plan coordinates. */
 function eventToNormalized(evt) {
   const rect = $('#canvas').getBoundingClientRect();
+  /* A hidden canvas measures zero; dividing by that would yield NaN coordinates and
+     put an object nowhere. Fall back to the centre rather than corrupting geometry. */
+  if (!rect.width || !rect.height) return { x: 0.5, y: 0.5 };
   return {
     x: clamp((evt.clientX - rect.left) / rect.width, 0, 1),
     y: clamp((evt.clientY - rect.top) / rect.height, 0, 1),
@@ -2716,7 +2719,15 @@ function applyView() {
   }
   img.style.opacity = (state.background.opacity == null ? 100 : state.background.opacity) / 100;
 
-  $('#emptyState').hidden = hasPlan || state.trees.length > 0 || state.structures.length > 0;
+  /* With nothing on it, #canvas is a bare white sheet with a drop shadow — and it
+     sits after #emptyState in the markup, so it paints straight over the "import a
+     plan" instructions and hides them. Show exactly one of the two.
+     A drawing tool also brings the canvas back, because trees and structures can be
+     placed before any plan is imported and they need a surface to land on. */
+  const hasContent = state.trees.length > 0 || state.structures.length > 0;
+  const needsCanvas = hasPlan || hasContent || tool !== 'select';
+  $('#emptyState').hidden = needsCanvas;
+  canvas.hidden = !needsCanvas;
   $('#zoomLevel').textContent = Math.round(zoom * 100) + '%';
 
   const svg = $('#svg');
@@ -2990,6 +3001,9 @@ function setTool(next) {
   };
   showHint(hints[next]);
   clearOverlay();
+  /* The active tool decides whether the empty-state message or the blank canvas is
+     shown, so the view has to be re-evaluated on every tool change. */
+  render();
 }
 
 function showHint(text) {
