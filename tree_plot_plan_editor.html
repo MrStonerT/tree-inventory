@@ -481,21 +481,23 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
               <p class="muted" style="margin:-4px 0 9px">
                 Measurements are recorded against the active visit, so repeat visits build history automatically.
               </p>
+              <!-- Measure however you actually measured. Diameter is stored either
+                   way; this only changes what you type and what is shown back. -->
+              <div class="row" style="margin:0 0 9px">
+                <span class="muted">Enter trunk size as</span>
+                <select id="fMeasureMode" style="max-width:180px; min-height:38px">
+                  <option value="diameter">Diameter</option>
+                  <option value="circumference">Circumference</option>
+                </select>
+              </div>
+
               <div class="grid3">
-                <label class="field"><span>Diameter (in)</span>
+                <label class="field"><span id="fDbhLabel">Diameter (in)</span>
                   <input id="fDbh" type="number" step="0.1" min="0" inputmode="decimal"></label>
                 <label class="field"><span>Height (ft)</span>
                   <input id="fHeight" type="number" step="1" min="0" inputmode="numeric"></label>
                 <label class="field"><span>Spread (ft)</span>
                   <input id="fSpread" type="number" step="1" min="0" inputmode="numeric"></label>
-              </div>
-
-              <!-- Measuring aid: the City tells you to run a tape around the trunk. -->
-              <div class="row" style="margin:-2px 0 9px">
-                <span class="muted">Measured around the trunk?</span>
-                <input id="fCirc" type="number" step="0.1" min="0" inputmode="decimal"
-                       placeholder="circumference" style="max-width:130px; min-height:34px">
-                <button id="btnCircToDia" class="btn-sm">&rarr; diameter</button>
               </div>
 
               <label class="inline"><input type="checkbox" id="fMultiTrunk">
@@ -1097,10 +1099,13 @@ function newObservation(visitId, date) {
     id: uid(),
     visitId: visitId,
     date: date || todayIso(),
-    /* `trunks` holds individual stem diameters for a multi-trunk tree. When it has
+    /* `trunks` holds individual stem DIAMETERS for a multi-trunk tree. When it has
        more than one entry, dbhIn is DERIVED from it via the ordinance formula and
-       must not be edited directly. */
+       must not be edited directly.
+       `measureMode` is a display preference only — values are always stored as
+       diameters, so nothing downstream has to care how they were typed in. */
     trunks: [],
+    measureMode: 'diameter',
     dbhIn: null, heightFt: null, spreadFt: null,
     condition: 'Unassessed',
     priority: 'Not set',
@@ -1232,7 +1237,10 @@ function normalizeV3(d) {
   out.trees.forEach(t => {
     t.uid = t.uid || uid();
     t.observations = Array.isArray(t.observations) ? t.observations : [];
-    t.observations.forEach(o => { if (!Array.isArray(o.trunks)) o.trunks = []; });
+    t.observations.forEach(o => {
+      if (!Array.isArray(o.trunks)) o.trunks = [];
+      if (o.measureMode !== 'circumference') o.measureMode = 'diameter';
+    });
     t.photos  = Array.isArray(t.photos)  ? t.photos  : [];
     /* Photos from packages written before annotations/EXIF existed. */
     t.photos.forEach(p => {
@@ -1379,6 +1387,39 @@ function circumferenceToDiameter(circumferenceIn) {
   if (!Number.isFinite(c) || c <= 0) return null;
   return Math.round((c / Math.PI) * 10) / 10;
 }
+
+/** Diameter (in) -> circumference (in). */
+function diameterToCircumference(diameterIn) {
+  const d = Number(diameterIn);
+  if (!Number.isFinite(d) || d <= 0) return null;
+  return Math.round(d * Math.PI * 10) / 10;
+}
+
+/**
+ * Convert a stored diameter into whatever the observation is being entered in.
+ *
+ * Only diameters are ever stored, so switching modes is purely presentational.
+ * Both directions round to 0.1", which converges rather than drifting: type 60"
+ * around, store 19.1" across, show 60.0" back, retype 60.0" -> still 19.1".
+ */
+function toDisplayValue(diameterIn, mode) {
+  if (diameterIn == null) return '';
+  return mode === 'circumference'
+    ? diameterToCircumference(diameterIn)
+    : Math.round(diameterIn * 10) / 10;
+}
+
+/** The inverse: what the user typed, back to a stored diameter. */
+function fromDisplayValue(entered, mode) {
+  const v = Number(entered);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return mode === 'circumference'
+    ? circumferenceToDiameter(v)
+    : Math.round(v * 10) / 10;
+}
+
+const measureModeOf = obs => (obs && obs.measureMode === 'circumference')
+  ? 'circumference' : 'diameter';
 
 /** Effective diameter for an observation: multi-trunk when stems are recorded. */
 function observationDiameter(obs) {
@@ -1580,6 +1621,8 @@ function observationForActiveVisit(tree, createIfMissing) {
       obs.priority = prev.priority;
       obs.defects = (prev.defects || []).slice();
       obs.recommendations = (prev.recommendations || []).slice();
+      obs.trunks = (prev.trunks || []).slice();
+      obs.measureMode = prev.measureMode || 'diameter';
     }
     tree.observations.push(obs);
   }
@@ -3363,6 +3406,13 @@ let currentTab = 'Selected';
 let pendingCalibration = null;
 let photoRenderToken = 0;
 
+/* Set when the measurement unit changes. The focus guards below exist to avoid
+   overwriting a field mid-typing, but a unit switch has to redisplay every field
+   including the focused one — otherwise a diameter would sit under a
+   "Circumference" label, which is worse than a lost keystroke. Cleared once the
+   editor has repainted. */
+let forceMeasureRefresh = false;
+
 const TABS = ['Selected', 'Trees', 'Visits', 'Project'];
 
 function showTab(name) {
@@ -3436,15 +3486,29 @@ function renderTreeEditor(tree) {
      directly would silently contradict the stems it is computed from. */
   const trunks = (shown && shown.trunks) || [];
   const multi = trunks.length > 0;
+  const mode = measureModeOf(shown);
+
+  setValue($('#fMeasureMode'), mode);
   setValue($('#fMultiTrunk'), multi);
   $('#trunkPanel').hidden = !multi;
+
   const dbhInput = $('#fDbh');
   dbhInput.readOnly = multi;
-  dbhInput.title = multi ? 'Calculated from the stem diameters below.' : '';
+  dbhInput.title = multi ? 'Calculated from the stem sizes below.' : '';
   dbhInput.style.background = multi ? '#f2f5f2' : '';
   renderTrunks(shown);
 
-  setValue($('#fDbh'),       shown && shown.dbhIn    != null ? shown.dbhIn    : '');
+  /* A multi-trunk total is a diameter by definition (largest + half of each other),
+     so that field shows a diameter whatever mode the stems are entered in. */
+  $('#fDbhLabel').textContent = multi
+    ? 'Diameter (in), calculated'
+    : (mode === 'circumference' ? 'Circumference (in)' : 'Diameter (in)');
+
+  const dbhText = multi
+    ? (shown && shown.dbhIn != null ? Math.round(shown.dbhIn * 10) / 10 : '')
+    : toDisplayValue(shown && shown.dbhIn, mode);
+  if (forceMeasureRefresh) dbhInput.value = dbhText === null ? '' : String(dbhText);
+  else setValue(dbhInput, dbhText);
   setValue($('#fHeight'),    shown && shown.heightFt != null ? shown.heightFt : '');
   setValue($('#fSpread'),    shown && shown.spreadFt != null ? shown.spreadFt : '');
   setValue($('#fCondition'), shown ? shown.condition : 'Unassessed');
@@ -3459,6 +3523,8 @@ function renderTreeEditor(tree) {
   renderTreeLocation(tree);
   renderObsHistory(tree);
   renderNoteHistory(tree);
+
+  forceMeasureRefresh = false;   // the unit change has now been painted everywhere
 }
 
 /* -------- Multi-trunk stems -------------------------------------------------- */
@@ -3478,24 +3544,55 @@ function renderTrunks(obs) {
     if (Number.isFinite(d) && d > largestVal) { largestVal = d; largestIdx = i; }
   });
 
-  host.innerHTML = trunks.map((d, i) =>
-    '<div class="trunk-row' + (i === largestIdx ? ' largest' : '') + '">'
-    + '<span class="n">Stem ' + (i + 1) + (i === largestIdx ? ' ×1' : ' ×½') + '</span>'
-    + '<input type="number" step="0.1" min="0" inputmode="decimal" data-trunk="' + i
-    + '" value="' + (d == null ? '' : d) + '" aria-label="Stem ' + (i + 1) + ' diameter in inches">'
-    + '<button class="rm-trunk danger" data-rm-trunk="' + i
-    + '" aria-label="Remove stem ' + (i + 1) + '">&times;</button>'
-    + '</div>').join('');
+  /* Rebuild the rows ONLY when the number of stems changes.
+     Replacing innerHTML while someone is typing destroys the focused input, and on
+     a phone that dismisses the keyboard. The on-screen keyboard itself resizes the
+     window and therefore triggers a render — so a blanket rebuild made the stem
+     fields impossible to type into at all. */
+  const existing = host.querySelectorAll('.trunk-row');
+  if (existing.length !== trunks.length) {
+    host.innerHTML = trunks.map(() =>
+      '<div class="trunk-row">'
+      + '<span class="n"></span>'
+      + '<input type="number" step="0.1" min="0" inputmode="decimal" data-trunk="">'
+      + '<button class="rm-trunk danger" data-rm-trunk="">&times;</button>'
+      + '</div>').join('');
+  }
+
+  const mode = measureModeOf(obs);
+  const unitWord = mode === 'circumference' ? 'circumference' : 'diameter';
+
+  Array.from(host.querySelectorAll('.trunk-row')).forEach((row, i) => {
+    const input = row.querySelector('[data-trunk]');
+    const remove = row.querySelector('[data-rm-trunk]');
+    input.setAttribute('data-trunk', i);
+    input.setAttribute('aria-label', 'Stem ' + (i + 1) + ' ' + unitWord + ' in inches');
+    remove.setAttribute('data-rm-trunk', i);
+    remove.setAttribute('aria-label', 'Remove stem ' + (i + 1));
+
+    row.classList.toggle('largest', i === largestIdx);
+    row.querySelector('.n').textContent =
+      'Stem ' + (i + 1) + (i === largestIdx ? ' ×1' : ' ×½');
+
+    /* Never touch the field being typed in — same guard as setValue, unless the
+       unit itself just changed. */
+    if (forceMeasureRefresh || document.activeElement !== input) {
+      const shown = toDisplayValue(trunks[i], mode);
+      const text = shown === '' || shown == null ? '' : String(shown);
+      if (input.value !== text) input.value = text;
+    }
+  });
 
   const total = multiTrunkDiameter(trunks);
+  const counted = trunks.filter(n => Number.isFinite(n) && n > 0).length;
   const badge = $('#trunkResult');
   if (total == null) {
-    badge.textContent = 'Enter stem diameters';
+    badge.textContent = 'Enter stem ' + unitWord;
     badge.className = 'badge warn';
   } else {
-    const sum = trunks.filter(Number.isFinite).map(n => n);
-    badge.textContent = sum.length > 1
-      ? sum.length + ' stems → ' + total + '" diameter'
+    /* The total is always a diameter — that is what the ordinance is written in. */
+    badge.textContent = counted > 1
+      ? counted + ' stems → ' + total + '" diameter'
       : total + '" diameter';
     badge.className = 'badge';
   }
@@ -4637,11 +4734,27 @@ function wireEvents() {
   $('#fProtected').onchange = e => { const v = e.target.checked; editTree(t => { t.protected = v; }); };
 
   /* --- observation fields --- */
+  /** The entry mode of the observation currently being edited. */
+  const activeMeasureMode = () => {
+    const tree = selectedTree();
+    if (!tree) return 'diameter';
+    return measureModeOf(observationForActiveVisit(tree, false) || latestObservation(tree));
+  };
+
   $('#fDbh').onchange = e => {
     /* Read-only while multi-trunk: the value is derived from the stems. */
     if (e.target.readOnly) return;
-    const v = numOrNull(e.target.value);
+    const v = fromDisplayValue(e.target.value, activeMeasureMode());
     editObservation(o => { o.dbhIn = v; });
+  };
+
+  $('#fMeasureMode').onchange = e => {
+    const v = e.target.value === 'circumference' ? 'circumference' : 'diameter';
+    /* Purely presentational — stored values are diameters either way, so switching
+       simply redisplays them in the other unit. Force the repaint so even a field
+       that currently has focus is re-labelled and re-valued. */
+    forceMeasureRefresh = true;
+    editObservation(o => { o.measureMode = v; });
   };
   $('#fHeight').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.heightFt = v; }); };
   $('#fSpread').onchange    = e => { const v = numOrNull(e.target.value); editObservation(o => { o.spreadFt = v; }); };
@@ -4692,7 +4805,7 @@ function wireEvents() {
     const input = e.target.closest('[data-trunk]');
     if (!input) return;
     const idx = Number(input.getAttribute('data-trunk'));
-    const value = numOrNull(input.value);
+    const value = fromDisplayValue(input.value, activeMeasureMode());
     editObservation(o => {
       if (!Array.isArray(o.trunks)) o.trunks = [];
       o.trunks[idx] = value;
@@ -4715,26 +4828,6 @@ function wireEvents() {
     o.trunks.push(null);
   });
 
-  $('#btnCircToDia').onclick = () => {
-    const circumference = numOrNull($('#fCirc').value);
-    if (circumference == null || circumference <= 0) {
-      setStatus('Enter the circumference first.', 'err');
-      return;
-    }
-    const diameter = circumferenceToDiameter(circumference);
-    editObservation(o => {
-      if (o.trunks && o.trunks.length) {
-        /* Fill the first blank stem, otherwise add one. */
-        const blank = o.trunks.findIndex(t => t == null);
-        if (blank >= 0) o.trunks[blank] = diameter; else o.trunks.push(diameter);
-        syncTrunkDiameter(o);
-      } else {
-        o.dbhIn = diameter;
-      }
-    });
-    $('#fCirc').value = '';
-    setStatus(circumference + '" around = ' + diameter + '" diameter.');
-  };
 
   /* --- notes --- */
   $('#btnAddNote').onclick = () => {
@@ -5085,10 +5178,17 @@ function wireEvents() {
        breakpoint makes the map pane wider even as the window shrinks, so its width
        is a poor signal — folding a Pixel Fold moves the window 841 -> 428 px while
        the map only moves 509 -> 395. */
-    const changedALot = lastWindowWidth > 0
-      && Math.abs(width - lastWindowWidth) / lastWindowWidth > 0.2;
+    const delta = lastWindowWidth > 0
+      ? Math.abs(width - lastWindowWidth) / lastWindowWidth : 0;
+    const unchanged = width === lastWindowWidth;
     lastWindowWidth = width;
-    if (changedALot && state.background.dataUrl) fitToView();
+
+    /* Width unchanged means the height moved on its own — which on a phone is the
+       on-screen keyboard opening. Re-rendering then would rebuild the very field
+       being typed into, so do nothing at all: the layout is CSS-driven and needs
+       no help here. */
+    if (unchanged) return;
+    if (delta > 0.2 && state.background.dataUrl) fitToView();
     else render();
   }, 180));
 }
