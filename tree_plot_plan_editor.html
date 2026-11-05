@@ -65,6 +65,7 @@ button,.filebtn{
   cursor:pointer; white-space:nowrap; user-select:none;
 }
 .toolgroup button,.toolgroup .filebtn{min-height:38px}
+.toolgroup.lang{margin-left:auto}
 button:hover,.filebtn:hover{background:var(--green-soft)}
 button:focus-visible,.filebtn:focus-visible{outline:2px solid var(--green); outline-offset:1px}
 button[aria-pressed="true"]{background:var(--green); color:#fff}
@@ -334,6 +335,9 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
   #view{flex:none; height:56vh; min-height:320px}
   .side{max-height:none; overflow:visible}
   .masthead h1{font-size:17px}
+  /* Tool names run longer in some languages; wrap rather than push the page wide. */
+  .toolgroup{flex-wrap:wrap; max-width:100%}
+  .toolgroup.lang{margin-left:0}
   .list{max-height:none}
 }
 
@@ -402,6 +406,11 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
       <button id="btnExportCsv" title="Export the tree schedule as CSV">CSV</button>
       <button id="btnPrint" title="Print or save a PDF report">Report</button>
     </div>
+
+    <!-- Lives in the toolbar rather than the masthead: the masthead is hidden on a
+         short window, and this has to stay reachable by someone who cannot read the
+         current language. Buttons are built from LANGUAGES at startup. -->
+    <div id="langGroup" class="toolgroup lang" role="group" aria-label="Language"></div>
   </div>
 
   <!-- ===================== Main layout ================== -->
@@ -430,7 +439,7 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
 
       <div id="view">
         <div id="emptyState" class="empty-state">
-          <div>
+          <div data-i18n-html>
             <b>Start with your plot plan</b>
             Import a PNG, JPG, WebP, or SVG of your survey using <strong>Import plan</strong>.
             <br><span class="muted">PDF surveys need converting to an image first. You can also
@@ -465,7 +474,7 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
 
         <!-- ===== Selected ===== -->
         <div id="panelSelected" class="tabpanel" role="tabpanel">
-          <p id="noSelection" class="empty-note">
+          <p id="noSelection" class="empty-note" data-i18n-html>
             Nothing selected. Pick a tree or structure on the plan, or use <b>+ Tree</b> to place one.
           </p>
 
@@ -477,7 +486,7 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
                 <label class="field"><span>Tree ID</span><input id="fTreeId" autocomplete="off"></label>
                 <label class="field"><span>Status</span>
                   <select id="fStatus">
-                    <option>Existing</option><option>Proposed</option><option>Removed</option>
+                    <option value="Existing">Existing</option><option value="Proposed">Proposed</option><option value="Removed">Removed</option>
                   </select>
                 </label>
               </div>
@@ -602,9 +611,10 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
               <label class="field"><span>Label</span><input id="sLabel" autocomplete="off"></label>
               <label class="field"><span>Type</span>
                 <select id="sKind">
-                  <option>Building</option><option>Driveway</option><option>Deck / patio</option>
-                  <option>Pool</option><option>Fence</option><option>Utility / easement</option>
-                  <option>Planting bed</option><option>Other</option>
+                  <option value="Building">Building</option><option value="Driveway">Driveway</option>
+                  <option value="Deck / patio">Deck / patio</option><option value="Pool">Pool</option>
+                  <option value="Fence">Fence</option><option value="Utility / easement">Utility / easement</option>
+                  <option value="Planting bed">Planting bed</option><option value="Other">Other</option>
                 </select>
               </label>
               <label class="field"><span>Notes</span><textarea id="sNotes"></textarea></label>
@@ -833,7 +843,8 @@ dialog::backdrop{background:rgba(21,33,25,.55)}
 
    Sections below, in order:
      1  Vocabulary        7  ZIP reader/writer
-     2  Utilities         8  Geometry & scale
+     1b Language          8  Geometry & scale
+     2  Utilities
      3  Schema & migration 9 Rendering
      4  State & history   10  Interaction
      5  Storage           11  Panels & forms
@@ -1006,6 +1017,820 @@ const STRUCTURE_KINDS = [
 const M_PER_FT = 0.3048;
 
 /* ============================================================================
+   1b. LANGUAGE
+
+   English is the source language and its text IS the lookup key: t('Save package')
+   finds the Spanish in STRINGS.es, and anything missing from the table falls back to
+   the English rather than showing a blank or a code. So the code keeps reading in
+   plain English, and a forgotten translation is a cosmetic gap, never a broken screen.
+
+   The one rule that matters: TRANSLATE ON THE WAY OUT, NEVER STORE IT. Project files
+   always hold the English vocabulary above ('Good', 'Deadwood', 'Building'...). Saving
+   Spanish words would make a package depend on the language it was written in, break
+   the logic that compares those values, and scramble a file opened by someone working
+   in the other language. Language is a preference of this device, not of the project.
+
+   To add a language: add it to LANGUAGES and give it a table in STRINGS.
+
+   Plurals are spelled out at the call site: t(n === 1 ? '{n} photo' : '{n} photos',
+   { n: n }). Enough for English and Spanish, which share the one-versus-many rule.
+
+   Ordinance wording is translated for reading only. The City publishes these rules in
+   English, and that text is the authority; legal terms keep their English form where
+   someone will need to find them in City documents (CRZ, City Arborist).
+   ========================================================================== */
+
+const LANGUAGES = {
+  en: { label: 'English', locale: null },
+  es: { label: 'Español', locale: 'es-US' },     // es-US: Spanish, with US date conventions
+};
+
+const LANG_KEY = 'aa-lang';
+
+const STRINGS = {
+  es: {
+    /* --- Page, toolbar --- */
+    'Arborist Assistant — Tree Plot Plan & Inventory': 'Arborist Assistant — Plano e inventario de árboles',
+    'Offline tree inventory over your plot plan survey. Nothing leaves this device.':
+      'Inventario de árboles sin conexión sobre su plano de levantamiento. Nada sale de este dispositivo.',
+    'Language': 'Idioma',
+    'Tools': 'Herramientas',
+    'Select and move (V)': 'Seleccionar y mover (V)',
+    'Select': 'Seleccionar',
+    'Place a tree (T)': 'Colocar un árbol (T)',
+    '+ Tree': '+ Árbol',
+    'Draw a structure or area (B)': 'Dibujar una estructura o área (B)',
+    '+ Structure': '+ Estructura',
+    'Calibrate the plan scale (S)': 'Calibrar la escala del plano (S)',
+    'Set scale': 'Fijar escala',
+    'Measure a distance (M)': 'Medir una distancia (M)',
+    'Measure': 'Medir',
+    'Edit': 'Editar',
+    'Delete selected (Del)': 'Eliminar lo seleccionado (Supr)',
+    'Delete': 'Eliminar',
+    'Undo (Ctrl+Z)': 'Deshacer (Ctrl+Z)',
+    'Undo': 'Deshacer',
+    'Redo (Ctrl+Y)': 'Rehacer (Ctrl+Y)',
+    'Redo': 'Rehacer',
+    'File': 'Archivo',
+    'Import a survey image as the base layer': 'Importar una imagen del levantamiento como capa base',
+    'Import plan': 'Importar plano',
+    'Open a .zip package or .json project': 'Abrir un paquete .zip o un proyecto .json',
+    'Open': 'Abrir',
+    'Save the full package including photos': 'Guardar el paquete completo, con fotos',
+    'Save package': 'Guardar paquete',
+    'Export the tree schedule as CSV': 'Exportar la lista de árboles como CSV',
+    'Print or save a PDF report': 'Imprimir o guardar un informe en PDF',
+    'Report': 'Informe',
+
+    /* --- Plan view --- */
+    'Plot plan': 'Plano',
+    'Plan': 'Plano',
+    'Canopy': 'Copa',
+    'Root zones': 'Zonas de raíces',
+    'Trees': 'Árboles',
+    'Structures': 'Estructuras',
+    'Labels': 'Etiquetas',
+    'Zoom out': 'Alejar',
+    'Zoom in': 'Acercar',
+    'Fit': 'Ajustar',
+    '<b>Start with your plot plan</b> Import a PNG, JPG, WebP, or SVG of your survey using <strong>Import plan</strong>. <br><span class="muted">PDF surveys need converting to an image first. You can also open an existing <code>.zip</code> package with <strong>Open</strong>.</span>':
+      '<b>Empiece con su plano</b> Importe un PNG, JPG, WebP o SVG de su levantamiento con <strong>Importar plano</strong>. <br><span class="muted">Los levantamientos en PDF deben convertirse primero en imagen. También puede abrir un paquete <code>.zip</code> existente con <strong>Abrir</strong>.</span>',
+    'Plot plan survey': 'Plano de levantamiento',
+    'Tap the plan to place a tree.': 'Toque el plano para colocar un árbol.',
+    'Drag on the plan to draw a structure or area.': 'Arrastre sobre el plano para dibujar una estructura o área.',
+    'Drag along a known distance — the survey scale bar, a property line, a building face.':
+      'Arrastre a lo largo de una distancia conocida: la barra de escala del levantamiento, un lindero, la fachada de un edificio.',
+    'Drag to measure. Release to keep it on screen; press Esc to clear.':
+      'Arrastre para medir. Suelte para dejarlo en pantalla; pulse Esc para borrarlo.',
+    'set scale first': 'fije primero la escala',
+    'Measured {distance}': 'Medido: {distance}',
+    'Calibrate the plan scale first — measurements need a known reference.':
+      'Calibre primero la escala del plano: las mediciones necesitan una referencia conocida.',
+    'ft': 'pies',
+    'in': 'pulg',
+
+    /* --- Tabs --- */
+    'Selected': 'Selección',
+    'Visits': 'Visitas',
+    'Project': 'Proyecto',
+    'Nothing selected. Pick a tree or structure on the plan, or use <b>+ Tree</b> to place one.':
+      'Nada seleccionado. Elija un árbol o una estructura en el plano, o use <b>+ Árbol</b> para colocar uno.',
+
+    /* --- Tree editor: identity --- */
+    'Identity': 'Identificación',
+    'Tree ID': 'ID del árbol',
+    'Status': 'Estado',
+    'Existing': 'Existente',
+    'Proposed': 'Propuesto',
+    'Removed': 'Retirado',
+    'Species (common)': 'Especie (nombre común)',
+    'e.g. Coast live oak': 'p. ej. Encino siempreverde',
+    'Botanical name': 'Nombre botánico',
+    'e.g. Quercus agrifolia': 'p. ej. Quercus virginiana',
+    'Flag as protected / heritage (manual override)': 'Marcar como protegido / patrimonial (ajuste manual)',
+    'Tree ID cannot be blank.': 'El ID del árbol no puede quedar vacío.',
+    'Tree ID "{id}" is already used.': 'El ID de árbol "{id}" ya está en uso.',
+    'Tree {id} placed. Fill in its details on the right.': 'Árbol {id} colocado. Complete sus datos en el panel.',
+    'Tree {id} deleted.': 'Árbol {id} eliminado.',
+    'Tree {id}': 'Árbol {id}',
+    'Delete tree {id}?\n\nThis permanently removes {what}.': '¿Eliminar el árbol {id}?\n\nEsto borra de forma permanente: {what}.',
+    '{n} observation(s)': '{n} observación(es)',
+    '{n} photo(s)': '{n} foto(s)',
+    '{n} note(s)': '{n} nota(s)',
+
+    /* --- Ordinance --- */
+    'Ordinance': 'Ordenanza',
+    'Heritage': 'Patrimonial',
+    'Protected': 'Protegido',
+    'Exempt': 'Exento',
+    'Not regulated': 'No regulado',
+    'No ordinance preset': 'Sin ordenanza predefinida',
+    'Austin, TX': 'Austin, TX',
+    'residential': 'residencial',
+    'commercial': 'comercial',
+    'All oaks': 'Todos los encinos y robles',
+    'Pecan': 'Nogal pecanero',
+    'Texas ash': 'Fresno de Texas',
+    'Bald cypress': 'Ciprés calvo',
+    'American elm': 'Olmo americano',
+    'Texas madrone': 'Madroño de Texas',
+    'Bigtooth maple': 'Arce de dientes grandes',
+    'Arizona walnut': 'Nogal de Arizona',
+    'Eastern black walnut': 'Nogal negro',
+    'Cedar elm': 'Olmo cedro',
+    'Pecan or walnut': 'Nogal (pecanero o de otro tipo)',
+    'Ashe juniper': 'Enebro de Ashe',
+    'Chinaberry': 'Paraíso',
+    'Ligustrum': 'Trueno (ligustro)',
+    'Paper mulberry': 'Morera de papel',
+    'Chinese tallow': 'Sebo chino',
+    '{species} is commonly listed as exempt from permitting at any size.':
+      '{species}: suele figurar como exento de permiso a cualquier tamaño.',
+    'Record a diameter to determine ordinance status.': 'Registre un diámetro para determinar el estado según la ordenanza.',
+    '{species} at {d}" meets the {n}" Heritage threshold.': '{species}: {d}" alcanza el umbral Patrimonial de {n}".',
+    'Note: {species} appears on some published lists of the ordinance but not the City\'s current species list — confirm this one.':
+      'Nota: {species} aparece en algunas listas publicadas de la ordenanza, pero no en la lista actual de especies de la Ciudad. Confirme este caso.',
+    '{d}" meets the {n}" Protected threshold for {type} property.': '{d}" alcanza el umbral de Protegido de {n}" para propiedad {type}.',
+    'A {species} becomes Heritage at {n}" — this one is {short}" short.':
+      '{species}: pasa a Patrimonial a partir de {n}"; a este le faltan {short}".',
+    '{d}" is below the {n}" Protected threshold for {type} property.': '{d}" está por debajo del umbral de Protegido de {n}" para propiedad {type}.',
+    'At least 50% of the CRZ must remain undisturbed at natural grade.':
+      'Al menos el 50% de la CRZ debe permanecer sin alterar, a nivel natural del terreno.',
+    'No cuts or fill greater than 4 inches within the 1/2 CRZ.':
+      'Sin cortes ni rellenos de más de 4 pulgadas dentro de la 1/2 CRZ.',
+    'No impacts permitted within the 1/4 CRZ.': 'No se permite ningún impacto dentro de la 1/4 CRZ.',
+    'Advisory only. Confirm status with the City Arborist before relying on it for a permit, a site plan, or a removal.':
+      'Solo orientativo. Confirme el estado con el arbolista de la Ciudad (City Arborist) antes de usarlo para un permiso, un plano de obra o una remoción.',
+    '<b>Critical root zone:</b> {r} radius (½ CRZ {half}, ¼ CRZ {quarter}).':
+      '<b>Zona crítica de raíces (CRZ):</b> radio de {r} (½ CRZ {half}, ¼ CRZ {quarter}).',
+    'Calibrate the plan scale to draw it and measure encroachment.':
+      'Calibre la escala del plano para dibujarla y medir la invasión.',
+    'No structures mapped yet.': 'Aún no hay estructuras en el plano.',
+    '<b>{pct}%</b> covered by mapped structures': '<b>{pct}%</b> cubierto por las estructuras del plano',
+    'a structure sits inside the ¼ CRZ, where no impact is permitted':
+      'hay una estructura dentro de la ¼ CRZ, donde no se permite ningún impacto',
+    'over the 50% that must stay undisturbed': 'supera el 50% que debe permanecer sin alterar',
+    'approaching the 50% limit': 'se acerca al límite del 50%',
+
+    /* --- Tree editor: assessment --- */
+    'Assessment': 'Evaluación',
+    'Measurements are recorded against the active visit, so repeat visits build history automatically.':
+      'Las mediciones se registran en la visita activa, así que las visitas repetidas crean el historial automáticamente.',
+    'Enter trunk size as': 'Ingresar tamaño del tronco como',
+    'Diameter': 'Diámetro',
+    'Circumference': 'Circunferencia',
+    'diameter': 'diámetro',
+    'circumference': 'circunferencia',
+    'Diameter (in)': 'Diámetro (pulg)',
+    'Circumference (in)': 'Circunferencia (pulg)',
+    'Diameter (in), calculated': 'Diámetro (pulg), calculado',
+    'Height (ft)': 'Altura (pies)',
+    'Spread (ft)': 'Copa (pies)',
+    'Multi-trunk tree': 'Árbol de varios troncos',
+    '+ Add stem': '+ Agregar tallo',
+    'Spread draws the canopy circle to true scale.': 'La medida de copa dibuja el círculo de la copa a escala real.',
+    'Condition': 'Condición',
+    'Priority': 'Prioridad',
+    'Observed defects': 'Defectos observados',
+    'Recommended work': 'Trabajo recomendado',
+    'Assessment notes': 'Notas de evaluación',
+    'Condition of this tree at this visit': 'Condición de este árbol en esta visita',
+    'An observation exists for this visit.': 'Ya hay una observación para esta visita.',
+    'No observation recorded for this visit yet — editing any field below will create one.':
+      'Aún no hay observación para esta visita; al editar cualquier campo de abajo se creará una.',
+    'Calculated from the stem sizes below.': 'Calculado a partir de los tamaños de tallo de abajo.',
+    'Measure every stem at {h} ft above grade. The largest stem counts in full; each additional stem counts at half.':
+      'Mida cada tallo a {h} pies sobre el nivel del suelo. El tallo más grande cuenta completo; cada tallo adicional cuenta la mitad.',
+    'Stem {n}': 'Tallo {n}',
+    'Stem {n} {unit} in inches': 'Tallo {n}: {unit} en pulgadas',
+    'Remove stem {n}': 'Quitar tallo {n}',
+    'Enter stem {unit}': 'Ingrese {unit} del tallo',
+    '{n} stems → {d}" diameter': '{n} tallos → {d}" de diámetro',
+    '{d}" diameter': '{d}" de diámetro',
+
+    /* --- Vocabulary: conditions, priorities, defects, recommendations --- */
+    'Unassessed': 'Sin evaluar',
+    'Good': 'Buena',
+    'Fair': 'Regular',
+    'Poor': 'Mala',
+    'Dead / hazard': 'Muerto / peligro',
+    'Not set': 'Sin definir',
+    'Monitor': 'Monitorear',
+    'Routine': 'Rutina',
+    'Within 12 months': 'En 12 meses',
+    'High priority': 'Prioridad alta',
+    'Immediate': 'Inmediata',
+    'Deadwood': 'Madera muerta',
+    'Codominant stems': 'Tallos codominantes',
+    'Included bark': 'Corteza incluida',
+    'Cavity / decay': 'Cavidad / pudrición',
+    'Root damage': 'Daño en raíces',
+    'Girdling roots': 'Raíces estrangulantes',
+    'Lean': 'Inclinación',
+    'Cracks': 'Grietas',
+    'Cankers': 'Cancros',
+    'Conks / fungal fruiting': 'Hongos / cuerpos fructíferos',
+    'Pest infestation': 'Infestación de plagas',
+    'Storm damage': 'Daño por tormenta',
+    'Poor structure': 'Mala estructura',
+    'Utility conflict': 'Conflicto con servicios públicos',
+    'Girdling hardware': 'Herraje estrangulante',
+    'Trunk wound': 'Herida en el tronco',
+    'Clean / deadwood prune': 'Poda de limpieza / madera muerta',
+    'Structural prune': 'Poda estructural',
+    'Crown raise': 'Elevación de copa',
+    'Crown reduce': 'Reducción de copa',
+    'Clearance prune': 'Poda de despeje',
+    'Cable / brace': 'Cableado / refuerzo',
+    'Remove': 'Retirar',
+    'Stump grind': 'Triturar tocón',
+    'Root collar excavation': 'Excavación del cuello de la raíz',
+    'Mulch': 'Acolchado (mulch)',
+    'Irrigate': 'Regar',
+    'Soil treatment': 'Tratamiento del suelo',
+    'Pest treatment': 'Tratamiento de plagas',
+    'Protect during construction': 'Proteger durante la obra',
+
+    /* --- Tree editor: photos --- */
+    'Photos': 'Fotos',
+    'Take photo': 'Tomar foto',
+    'Add from library': 'Agregar de la galería',
+    'No photos yet for this tree.': 'Este árbol aún no tiene fotos.',
+    'Tap a photo to view it, add a caption, or draw on it to show where to cut.':
+      'Toque una foto para verla, agregar una leyenda o dibujar en ella dónde cortar.',
+    'Tree photo': 'Foto del árbol',
+    'Remove photo': 'Quitar foto',
+    '{n} mark(s) drawn on this photo': '{n} marca(s) dibujada(s) en esta foto',
+    'GPS tagged': 'Con GPS',
+    'Could not read "{name}" — this browser cannot decode HEIC. Set your iPhone camera to "Most Compatible" (Settings → Camera → Formats) so it saves JPEG instead.':
+      'No se pudo leer "{name}": este navegador no puede decodificar HEIC. Ponga la cámara del iPhone en "Más compatible" (Ajustes → Cámara → Formatos) para que guarde en JPEG.',
+    'Could not read photo "{name}".': 'No se pudo leer la foto "{name}".',
+    'Processing {n} photo(s)…': 'Procesando {n} foto(s)…',
+    'Added {n} photo(s) — remember to save the package before closing.':
+      'Se agregaron {n} foto(s). Recuerde guardar el paquete antes de cerrar.',
+    'Added {n} photo(s).': 'Se agregaron {n} foto(s).',
+    'Remove this photo from tree {id}?': '¿Quitar esta foto del árbol {id}?',
+
+    /* --- Photo viewer --- */
+    'Photo': 'Foto',
+    'Drawing tool': 'Herramienta de dibujo',
+    'Marker colour': 'Color del marcador',
+    'Undo mark': 'Deshacer marca',
+    'Clear marks': 'Borrar marcas',
+    'Caption': 'Leyenda',
+    'e.g. North face, cut at collar': 'p. ej. Cara norte, cortar en el collar',
+    'Done': 'Listo',
+    'Red': 'Rojo',
+    'Yellow': 'Amarillo',
+    'Cyan': 'Cian',
+    'White': 'Blanco',
+    'Line': 'Línea',
+    'Arrow': 'Flecha',
+    'Freehand': 'A mano alzada',
+    'Circle': 'Círculo',
+    'Drag to draw a straight cut line.': 'Arrastre para dibujar una línea de corte recta.',
+    'Drag to point at something.': 'Arrastre para señalar algo.',
+    'Draw freely — trace a limb or a wound.': 'Dibuje libremente: trace una rama o una herida.',
+    'Drag a box to ring an area.': 'Arrastre un recuadro para encerrar un área.',
+    '{n} mark': '{n} marca',
+    '{n} marks': '{n} marcas',
+    'No marks yet': 'Aún sin marcas',
+    'Remove all {n} marks from this photo?': '¿Quitar las {n} marcas de esta foto?',
+    'Taken': 'Tomada',
+    '(file date — no EXIF)': '(fecha del archivo, sin EXIF)',
+    'Visit': 'Visita',
+    'Stored': 'Guardada',
+    'Camera': 'Cámara',
+    'Original': 'Original',
+    'Exposure': 'Exposición',
+    '±{n} m reported': '±{n} m reportados',
+    '{n} m elevation': '{n} m de elevación',
+    'facing {deg}° {dir}': 'orientada a {deg}° {dir}',
+    'No GPS in this photo. Phones omit it when location access is off for the camera, and screenshots or edited copies lose it.':
+      'Esta foto no tiene GPS. Los teléfonos lo omiten cuando la cámara no tiene acceso a la ubicación, y las capturas de pantalla o copias editadas lo pierden.',
+
+    /* --- Voice notes --- */
+    'Voice notes': 'Notas de voz',
+    'Record the arborist talking about this tree, then transcribe it later. Saved every few seconds as it records.':
+      'Grabe al arbolista hablando de este árbol y transcríbalo después. Se guarda cada pocos segundos mientras graba.',
+    '● Record for this tree': '● Grabar para este árbol',
+    'No voice notes for this tree yet.': 'Este árbol aún no tiene notas de voz.',
+    'Walk-through recording': 'Grabación del recorrido',
+    'One long recording for the whole visit. Start it when you set off and leave it running — audio is written to storage every few seconds, so an interruption costs seconds rather than the whole take.':
+      'Una grabación larga para toda la visita. Iníciela al salir y déjela correr: el audio se guarda cada pocos segundos, así que una interrupción cuesta segundos y no toda la grabación.',
+    '● Record the walk-through': '● Grabar el recorrido',
+    'No walk-through recording for this visit yet.': 'Esta visita aún no tiene grabación del recorrido.',
+    'Walk-through': 'Recorrido',
+    'Stop & save': 'Detener y guardar',
+    'saved through {time}': 'guardado hasta {time}',
+    'starting…': 'iniciando…',
+    'This browser cannot record audio.': 'Este navegador no puede grabar audio.',
+    'Microphone permission was declined. Allow it in your browser settings to record.':
+      'Se negó el permiso del micrófono. Permítalo en la configuración del navegador para grabar.',
+    'Could not open the microphone: {detail}': 'No se pudo abrir el micrófono: {detail}',
+    'Could not start recording: {detail}': 'No se pudo iniciar la grabación: {detail}',
+    'Storage error while recording — stop and save soon.': 'Error de almacenamiento al grabar: detenga y guarde pronto.',
+    'Recording stopped unexpectedly. Audio captured so far was kept.':
+      'La grabación se detuvo inesperadamente. Se conservó el audio capturado hasta ahora.',
+    'Microphone was interrupted — recording saved up to that point.':
+      'Se interrumpió el micrófono; la grabación se guardó hasta ese punto.',
+    'Recording. Audio is written to storage every {n} seconds, so a crash costs seconds, not the whole take.':
+      'Grabando. El audio se guarda cada {n} segundos, así que un fallo cuesta segundos y no toda la grabación.',
+    'Nothing was captured — recording discarded.': 'No se capturó nada; grabación descartada.',
+    'Saved {time} of audio ({size}).': 'Se guardaron {time} de audio ({size}).',
+    'Could not save the recording: {detail}': 'No se pudo guardar la grabación: {detail}',
+    'Recovered {time} of audio from an interrupted recording ({size}). It is in the tree’s voice notes — delete it if you do not want it.':
+      'Se recuperaron {time} de audio de una grabación interrumpida ({size}). Está en las notas de voz del árbol; elimínelo si no lo quiere.',
+    'Recovered {time} of audio from an interrupted recording ({size}). It is in the Visits tab — delete it if you do not want it.':
+      'Se recuperaron {time} de audio de una grabación interrumpida ({size}). Está en la pestaña Visitas; elimínelo si no lo quiere.',
+    'Delete this {time} recording?': '¿Eliminar esta grabación de {time}?',
+
+    /* --- Location --- */
+    'Location from photos': 'Ubicación según las fotos',
+    'Copy coordinates': 'Copiar coordenadas',
+    'Averaged from {n} photo.': 'Promedio de {n} foto.',
+    'Averaged from {n} photos.': 'Promedio de {n} fotos.',
+    'Camera reported ±{n} m.': 'La cámara reportó ±{n} m.',
+    '<span class="warn">Fixes disagree by {n} m</span> — typical under canopy; treat this as approximate.':
+      '<span class="warn">Las posiciones difieren {n} m</span>; es normal bajo la copa. Tómelo como aproximado.',
+    'Fixes agree within {n} m.': 'Las posiciones coinciden con {n} m de diferencia.',
+    'Copied {text}': 'Copiado: {text}',
+    'Coordinates: {text}': 'Coordenadas: {text}',
+
+    /* --- History and notes --- */
+    'Observation history': 'Historial de observaciones',
+    'No observations yet. Enter a measurement above to record one against the active visit.':
+      'Aún no hay observaciones. Ingrese una medición arriba para registrarla en la visita activa.',
+    'DBH': 'DAP',
+    'Height': 'Altura',
+    'Spread': 'Copa',
+    'Defects': 'Defectos',
+    'Work': 'Trabajo',
+    'current': 'actual',
+    'Notes log': 'Registro de notas',
+    'Add a dated note (append-only)': 'Agregue una nota con fecha (no se puede editar después)',
+    'Add note': 'Agregar nota',
+    'No notes yet.': 'Aún no hay notas.',
+
+    /* --- Structures --- */
+    'Structure / area': 'Estructura / área',
+    'Label': 'Etiqueta',
+    'Type': 'Tipo',
+    'Building': 'Edificio',
+    'Driveway': 'Entrada de autos',
+    'Deck / patio': 'Terraza / patio',
+    'Pool': 'Alberca',
+    'Fence': 'Cerca',
+    'Utility / easement': 'Servicios / servidumbre',
+    'Planting bed': 'Jardinera',
+    'Other': 'Otro',
+    'Notes': 'Notas',
+    'Fill opacity': 'Opacidad del relleno',
+    'Approximately {w} × {h} ({area} sq ft)': 'Aproximadamente {w} × {h} ({area} pies²)',
+    'Calibrate the plan scale to see real dimensions.': 'Calibre la escala del plano para ver las dimensiones reales.',
+
+    /* --- Tree list --- */
+    'Filter': 'Filtrar',
+    'ID, species, condition, or recommendation': 'ID, especie, condición o recomendación',
+    'Sort by': 'Ordenar por',
+    'Priority (urgent first)': 'Prioridad (urgentes primero)',
+    'Condition (worst first)': 'Condición (peores primero)',
+    'DBH (largest first)': 'DAP (más grandes primero)',
+    'Species': 'Especie',
+    'Species not set': 'Especie sin definir',
+    '{n} photo': '{n} foto',
+    '{n} photos': '{n} fotos',
+    'No trees match.': 'Ningún árbol coincide.',
+    '{n} of {total} trees shown': 'Se muestran {n} de {total} árboles',
+
+    /* --- Visits --- */
+    'Active visit': 'Visita activa',
+    'New measurements are filed under the active visit. Start a new visit each time you walk the property so change over time is captured.':
+      'Las mediciones nuevas se archivan en la visita activa. Inicie una visita nueva cada vez que recorra la propiedad para registrar los cambios con el tiempo.',
+    'Recording under': 'Registrando en',
+    'Start new visit': 'Iniciar visita nueva',
+    'Visit details': 'Detalles de la visita',
+    'Date': 'Fecha',
+    'Assessor': 'Evaluador',
+    'Conditions': 'Condiciones',
+    'e.g. Clear, 78°F, light wind': 'p. ej. Despejado, 78°F, viento leve',
+    'Visit notes': 'Notas de la visita',
+    'Delete this visit': 'Eliminar esta visita',
+    'All visits': 'Todas las visitas',
+    '{n} tree assessed': '{n} árbol evaluado',
+    '{n} trees assessed': '{n} árboles evaluados',
+    'New visit started for {date}. Measurements you record now are filed under it.':
+      'Visita nueva iniciada para {date}. Las mediciones que registre ahora se archivan en ella.',
+    'Delete the visit of {date}?': '¿Eliminar la visita del {date}?',
+    'This also deletes {n} observation(s) recorded during it.': 'También se eliminan {n} observación(es) registradas en ella.',
+
+    /* --- Project --- */
+    'Property': 'Propiedad',
+    'Project name': 'Nombre del proyecto',
+    'Address': 'Dirección',
+    'Client': 'Cliente',
+    'Arborist': 'Arbolista',
+    'Project notes': 'Notas del proyecto',
+    'Jurisdiction': 'Jurisdicción',
+    'Property type': 'Tipo de propiedad',
+    'Residential': 'Residencial',
+    'Commercial / multifamily': 'Comercial / multifamiliar',
+    'commercial / multifamily': 'comercial / multifamiliar',
+    'No preset selected. Diameters are recorded as entered, and a multi-trunk tree still totals as largest stem + half of each additional stem.':
+      'Sin ordenanza predefinida. Los diámetros se registran como se ingresan, y un árbol de varios troncos se sigue sumando como el tallo más grande + la mitad de cada tallo adicional.',
+    'Protected at <b>{n}"</b> on {type} property; listed species become Heritage at <b>{h}"</b>.':
+      'Protegido a partir de <b>{n}"</b> en propiedad {type}; las especies de la lista pasan a Patrimonial a partir de <b>{h}"</b>.',
+    'Diameter measured at {h} ft above grade; multi-trunk totals as largest stem + ½ of each additional stem.':
+      'Diámetro medido a {h} pies sobre el nivel del suelo; en varios troncos se suma el tallo más grande + ½ de cada tallo adicional.',
+    'Critical root zone radius = 1 ft per inch of diameter.': 'Radio de la zona crítica de raíces = 1 pie por pulgada de diámetro.',
+    'Plan & scale': 'Plano y escala',
+    'Plan opacity': 'Opacidad del plano',
+    'Calibrate scale': 'Calibrar escala',
+    'Clear': 'Borrar',
+    'Calibrated: <b>{distance}</b> reference. Canopy circles and measurements are live.':
+      'Calibrado: referencia de <b>{distance}</b>. Los círculos de copa y las mediciones están activos.',
+    '<b>Not calibrated.</b> Canopy circles and distances stay hidden until you set a scale.':
+      '<b>Sin calibrar.</b> Los círculos de copa y las distancias permanecen ocultos hasta que fije una escala.',
+    'Scale cleared.': 'Escala borrada.',
+    'Scale set. Canopy circles and measurements are now live.': 'Escala fijada. Los círculos de copa y las mediciones ya están activos.',
+    'Inventory summary': 'Resumen del inventario',
+    'Needs work': 'Requiere trabajo',
+    'Unidentified': 'Sin identificar',
+    'Species mix': 'Mezcla de especies',
+    'Storage': 'Almacenamiento',
+    '{photos} photos, about {size} in the package.': '{photos} fotos, unos {size} en el paquete.',
+    '{photos} photos and {recs} recording, about {size} in the package.': '{photos} fotos y {recs} grabación, unos {size} en el paquete.',
+    '{photos} photos and {recs} recordings, about {size} in the package.': '{photos} fotos y {recs} grabaciones, unos {size} en el paquete.',
+    'Photos persist in this browser between sessions.': 'Las fotos se conservan en este navegador entre sesiones.',
+    'this page was opened directly as a file, and browsers block persistent storage on file:// addresses':
+      'esta página se abrió directamente como archivo, y los navegadores bloquean el almacenamiento persistente en direcciones file://',
+    'persistent storage is unavailable here ({reason})': 'el almacenamiento persistente no está disponible aquí ({reason})',
+    '<span class="warn">Photos are held in memory only</span> — {cause}. <b>Save the package before closing the tab</b> or photos will be lost. Serving the app over https:// fixes this — see Offline &amp; install below.':
+      '<span class="warn">Las fotos solo están en memoria</span>: {cause}. <b>Guarde el paquete antes de cerrar la pestaña</b> o se perderán las fotos. Servir la aplicación por https:// lo soluciona; vea Sin conexión e instalación más abajo.',
+    'Offline & install': 'Sin conexión e instalación',
+    'Install app': 'Instalar aplicación',
+    'Make storage permanent': 'Hacer permanente el almacenamiento',
+    'Update available — reload': 'Actualización disponible: recargar',
+    'This browser does not support permanent storage requests.': 'Este navegador no admite solicitudes de almacenamiento permanente.',
+    'Storage is now permanent — the browser will not evict your data to reclaim space.':
+      'El almacenamiento ya es permanente: el navegador no borrará sus datos para liberar espacio.',
+    'The browser declined. Installing the app to your home screen usually makes it grant this.':
+      'El navegador lo rechazó. Instalar la aplicación en la pantalla de inicio suele hacer que lo conceda.',
+    'Could not request permanent storage: {detail}': 'No se pudo solicitar el almacenamiento permanente: {detail}',
+    '<span class="warn">Running as a local file.</span> Offline caching and persistent storage both need the app served over https:// (or localhost). Everything else works normally.':
+      '<span class="warn">Se está ejecutando como archivo local.</span> La caché sin conexión y el almacenamiento persistente requieren servir la aplicación por https:// (o localhost). Todo lo demás funciona con normalidad.',
+    '<span class="warn">This address is not a secure context</span>, so offline caching is unavailable. A LAN address such as http://192.168.x.x does not count — use https:// or localhost.':
+      '<span class="warn">Esta dirección no es un contexto seguro</span>, así que la caché sin conexión no está disponible. Una dirección de red local como http://192.168.x.x no sirve: use https:// o localhost.',
+    '<b>Offline ready.</b> The app is cached and will open with no connection.':
+      '<b>Lista sin conexión.</b> La aplicación está en caché y abrirá sin conexión.',
+    'Caching the app for offline use — reload once to finish.': 'Guardando la aplicación para usarla sin conexión; recargue una vez para terminar.',
+    'Offline caching unavailable in this browser.': 'La caché sin conexión no está disponible en este navegador.',
+    'Running as an installed app.': 'Se está ejecutando como aplicación instalada.',
+    'Storage is <b>permanent</b> and will not be evicted.': 'El almacenamiento es <b>permanente</b> y no se borrará.',
+    '<span class="warn">Storage is best-effort</span> — the browser may evict it to reclaim space. Installing to your home screen makes permanence much more likely.':
+      '<span class="warn">El almacenamiento no está garantizado</span>: el navegador puede borrarlo para liberar espacio. Instalar en la pantalla de inicio hace mucho más probable que sea permanente.',
+    'Installed. Launch it from your home screen to work offline.': 'Instalada. Ábrala desde la pantalla de inicio para trabajar sin conexión.',
+    'Install dismissed. You can still use the app in this tab.': 'Instalación descartada. Puede seguir usando la aplicación en esta pestaña.',
+    'You have unsaved changes. Reload to update anyway?': 'Tiene cambios sin guardar. ¿Recargar para actualizar de todos modos?',
+
+    /* --- Status bar --- */
+    'Import a plot plan to begin.': 'Importe un plano para empezar.',
+    'Tip: calibrate the plan scale to unlock canopy circles and measurements.':
+      'Consejo: calibre la escala del plano para activar los círculos de copa y las mediciones.',
+    '{n} tree': '{n} árbol',
+    '{n} trees': '{n} árboles',
+    '{n} visit': '{n} visita',
+    '{n} visits': '{n} visitas',
+    'Not saved yet': 'Aún sin guardar',
+    'Unsaved changes': 'Cambios sin guardar',
+    'Unsaved changes · last saved {time}': 'Cambios sin guardar · guardado por última vez {time}',
+    'Saved {time}': 'Guardado {time}',
+
+    /* --- Scale dialog --- */
+    'Set the plan scale': 'Fijar la escala del plano',
+    'You drew a line on the plan. Enter what that line measures in real life — use the survey’s scale bar, or a known dimension such as a property line or building face.':
+      'Dibujó una línea en el plano. Ingrese cuánto mide en la realidad: use la barra de escala del levantamiento o una dimensión conocida, como un lindero o la fachada de un edificio.',
+    'Real-world length': 'Longitud real',
+    'e.g. 20': 'p. ej. 20',
+    'Units': 'Unidades',
+    'Feet': 'Pies',
+    'Meters': 'Metros',
+    'Cancel': 'Cancelar',
+
+    /* --- Import, open, save --- */
+    'Not a project file.': 'No es un archivo de proyecto.',
+    'Unreadable plan image.': 'No se puede leer la imagen del plano.',
+    'That file could not be read as an image.': 'Ese archivo no se pudo leer como imagen.',
+    'Plan replaced, but its proportions differ from the old one — re-check the scale calibration.':
+      'Plano reemplazado, pero sus proporciones difieren del anterior: revise la calibración de la escala.',
+    'Plan imported ({w}×{h}). It is fairly low resolution — a 300 DPI rescan will stay sharper when you zoom in to place trees.':
+      'Plano importado ({w}×{h}). Tiene una resolución bastante baja: un escaneo a 300 DPI se verá más nítido al acercar para colocar árboles.',
+    'Plan imported ({w}×{h}).': 'Plano importado ({w}×{h}).',
+    'Could not import that plan.': 'No se pudo importar ese plano.',
+    'Building package…': 'Creando el paquete…',
+    'Saved {file} ({size})': 'Guardado {file} ({size})',
+    ', including {n} marked-up photo': ', con {n} foto marcada',
+    ', including {n} marked-up photos': ', con {n} fotos marcadas',
+    ' — warning: {n} photo(s) could not be found.': ' — aviso: no se encontraron {n} foto(s).',
+    'Could not build the package: {detail}': 'No se pudo crear el paquete: {detail}',
+    'Opening {name}…': 'Abriendo {name}…',
+    'Opened {name} — {trees} trees, {photos} photos.': 'Se abrió {name}: {trees} árboles, {photos} fotos.',
+    'Could not open that file: {detail}': 'No se pudo abrir ese archivo: {detail}',
+    'No project.json inside that ZIP.': 'Ese ZIP no contiene project.json.',
+    'Not a ZIP file (no end-of-central-directory record).': 'No es un archivo ZIP (falta el registro de fin de directorio central).',
+    'Damaged ZIP central directory.': 'El directorio central del ZIP está dañado.',
+    'Damaged ZIP entry: {name}': 'Entrada del ZIP dañada: {name}',
+    'Unsupported compression in ZIP entry: {name}': 'Compresión no admitida en la entrada del ZIP: {name}',
+    'Restored {n} photos and {a} recordings.': 'Se restauraron {n} fotos y {a} grabaciones.',
+    'Restored {n} photos.': 'Se restauraron {n} fotos.',
+    'Opened, but {n} photo reference(s) were dropped — JSON files do not carry photo data. Use a .zip package to keep photos.':
+      'Se abrió, pero se descartaron {n} referencia(s) a fotos: los archivos JSON no contienen fotos. Use un paquete .zip para conservarlas.',
+    'An unsaved session from {when} was found ({n} trees).\n\nRestore it?':
+      'Se encontró una sesión sin guardar del {when} ({n} árboles).\n\n¿Restaurarla?',
+    'Recovered your last session. Save a package to make it permanent.':
+      'Se recuperó su última sesión. Guarde un paquete para conservarla.',
+
+    /* --- Package README.txt --- */
+    'ARBORIST ASSISTANT — PROJECT PACKAGE': 'ARBORIST ASSISTANT — PAQUETE DEL PROYECTO',
+    '(unnamed)': '(sin nombre)',
+    'Property : {v}': 'Propiedad  : {v}',
+    'Address  : {v}': 'Dirección  : {v}',
+    'Exported : {v}': 'Exportado  : {v}',
+    'Trees    : {v}': 'Árboles    : {v}',
+    'Photos   : {v}': 'Fotos      : {v}',
+    'Visits   : {v}': 'Visitas    : {v}',
+    'CONTENTS': 'CONTENIDO',
+    '  project.json   All tree data, observations, visits, and layout geometry.':
+      '  project.json   Todos los datos de árboles, observaciones, visitas y la geometría del plano.',
+    '  plan.*         The plot plan survey image used as the base layer.':
+      '  plan.*         La imagen del plano de levantamiento usada como capa base.',
+    '  audio/         Voice recordings, named by tree and date. Feed these straight\n                 into a transcription tool.':
+      '  audio/         Grabaciones de voz, con nombre por árbol y fecha. Puede pasarlas\n                 directamente a una herramienta de transcripción.',
+    '  photos/        Tree photos, one folder per tree, named by photo id.\n                 A "-marked.jpg" copy sits beside any photo that has cut lines or\n                 other marks drawn on it, so they are visible without the app.':
+      '  photos/        Fotos de árboles, una carpeta por árbol, con nombre por id de foto.\n                 Junto a cada foto con líneas de corte u otras marcas hay una copia\n                 "-marked.jpg", para verlas sin la aplicación.',
+    'This is an ordinary ZIP file. You can open it in Windows Explorer, macOS Finder,\nor any unzip tool to browse the photos directly without the app.':
+      'Este es un archivo ZIP normal. Puede abrirlo en el Explorador de Windows, en el\nFinder de macOS o en cualquier descompresor para ver las fotos sin la aplicación.',
+    'PRIVACY: photos may carry GPS coordinates from the camera, and project.json records\nthem. Bear that in mind before sending this package to anyone outside the job.':
+      'PRIVACIDAD: las fotos pueden llevar coordenadas GPS de la cámara, y project.json las\nregistra. Téngalo en cuenta antes de enviar este paquete a alguien ajeno al trabajo.',
+    'To continue working, open this .zip with the Arborist Assistant HTML file.':
+      'Para seguir trabajando, abra este .zip con el archivo HTML de Arborist Assistant.',
+
+    /* --- CSV and report --- */
+    'Botanical': 'Nombre botánico',
+    'Flagged': 'Marcado',
+    'Stems': 'Tallos',
+    'Stem diameters (in)': 'Diámetros de tallos (pulg)',
+    'CRZ radius (ft)': 'Radio de CRZ (pies)',
+    'CRZ impacted (%)': 'CRZ afectada (%)',
+    'Last assessed': 'Última evaluación',
+    'Marked photos': 'Fotos marcadas',
+    'Latitude': 'Latitud',
+    'Longitude': 'Longitud',
+    'GPS spread (m)': 'Dispersión GPS (m)',
+    'Yes': 'Sí',
+    'No': 'No',
+    'Exported {n} trees to CSV.': 'Se exportaron {n} árboles a CSV.',
+    'Report date': 'Fecha del informe',
+    'Trees inventoried': 'Árboles inventariados',
+    '{n} stems': '{n} tallos',
+    'Tree Inventory': 'Inventario de árboles',
+    'Tree schedule': 'Lista de árboles',
+    'Dia. (in)': 'Diám. (pulg)',
+    'CRZ (ft)': 'CRZ (pies)',
+    'Ht (ft)': 'Alt. (pies)',
+    'No trees recorded.': 'No hay árboles registrados.',
+    'diameter measured at {h} ft above grade; multi-trunk totalled as largest stem + ½ of each additional stem. Critical root zone radius = 1 ft per inch of diameter.':
+      'diámetro medido a {h} pies sobre el nivel del suelo; en varios troncos se suma el tallo más grande + ½ de cada tallo adicional. Radio de la zona crítica de raíces = 1 pie por pulgada de diámetro.',
+
+    /* --- Labels the app writes into a project itself. See stockLabel. --- */
+    'Untitled property': 'Propiedad sin título',
+    'Baseline survey': 'Levantamiento inicial',
+    'Imported baseline': 'Línea base importada',
+    'Structure': 'Estructura',
+    'Imported legacy comments': 'Comentarios antiguos importados',
+    'Recovered after interruption': 'Recuperada tras una interrupción',
+    'Recovered after interruption — original tree/visit no longer in this project':
+      'Recuperada tras una interrupción; el árbol o la visita original ya no está en este proyecto',
+  },
+};
+
+/* The app itself writes these into project data, in English like everything stored.
+   User-typed text must never go through t() — a client named "Plan" would come back
+   as "Plano" — so a label is translated only if it is one of ours. */
+const STOCK_LABELS = new Set([
+  'Untitled property', 'Baseline survey', 'Imported baseline', 'Structure', 'Arborist',
+  'Imported legacy comments', 'Recovered after interruption',
+  'Recovered after interruption — original tree/visit no longer in this project',
+]);
+
+/* Spanish names for the species suggestions, used to find a tree and never stored.
+   Where a species has no name in common Spanish use it is left out rather than
+   invented; those are still reachable by their botanical name. */
+const SPECIES_ES = {
+  'Live oak': 'Encino siempreverde',
+  'Escarpment live oak': 'Encino siempreverde de la meseta',
+  'Post oak': 'Encino de poste',
+  'Texas red oak': 'Encino rojo de Texas',
+  'Shumard oak': 'Encino de Shumard',
+  'Bur oak': 'Encino macrocarpo',
+  'Chinquapin oak': 'Encino chinquapín',
+  'Lacey oak': 'Encino de Lacey',
+  'Monterrey oak': 'Encino de Monterrey',
+  'Cedar elm': 'Olmo cedro',
+  'Ashe juniper': 'Enebro de Ashe',
+  'Pecan': 'Nogal pecanero',
+  'Texas ash': 'Fresno de Texas',
+  'Green ash': 'Fresno verde',
+  'Arizona walnut': 'Nogal de Arizona',
+  'Bald cypress': 'Ciprés calvo',
+  'Texas madrone': 'Madroño de Texas',
+  'Bigtooth maple': 'Arce de dientes grandes',
+  'American sycamore': 'Sicomoro americano',
+  'Sugar hackberry': 'Palo blanco',
+  'Netleaf hackberry': 'Cúmbaro',
+  'Texas persimmon': 'Chapote',
+  'Texas mountain laurel': 'Frijolillo',
+  'Mexican plum': 'Ciruelo mexicano',
+  'Escarpment black cherry': 'Capulín',
+  'Yaupon holly': 'Acebo yaupón',
+  'Western soapberry': 'Jaboncillo',
+  'Anacua': 'Anacua',
+  'Honey mesquite': 'Mezquite',
+  'Huisache': 'Huisache',
+  'Retama': 'Retama',
+  'Desert willow': 'Mimbre',
+  'Black willow': 'Sauce negro',
+  'Eastern cottonwood': 'Álamo',
+  'Red mulberry': 'Mora roja',
+  "Bois d'arc": 'Naranjo de Luisiana',
+  'Arizona cypress': 'Ciprés de Arizona',
+  'Loblolly pine': 'Pino taeda',
+  'Chinaberry': 'Paraíso',
+  'Ligustrum': 'Trueno',
+  'Chinese tallow': 'Sebo chino',
+  'Paper mulberry': 'Morera de papel',
+  'Coast live oak': 'Encino costero',
+  'Cork oak': 'Alcornoque',
+  'Red oak': 'Roble rojo',
+  'White oak': 'Roble blanco',
+  'Coast redwood': 'Secuoya roja',
+  'Monterey pine': 'Pino de Monterrey',
+  'Ponderosa pine': 'Pino ponderosa',
+  'Douglas fir': 'Abeto de Douglas',
+  'Deodar cedar': 'Cedro del Himalaya',
+  'California sycamore': 'Sicomoro de California',
+  'London plane': 'Plátano de sombra',
+  'Japanese maple': 'Arce japonés',
+  'Red maple': 'Arce rojo',
+  'Silver maple': 'Arce plateado',
+  'Sweetgum': 'Liquidámbar',
+  'Tulip tree': 'Tulipanero',
+  'American elm': 'Olmo americano',
+  'Chinese elm': 'Olmo chino',
+  'Honey locust': 'Acacia de tres espinas',
+  'Black walnut': 'Nogal negro',
+  'English walnut': 'Nogal inglés',
+  'Blue gum eucalyptus': 'Eucalipto azul',
+  'Camphor': 'Alcanfor',
+  'Southern magnolia': 'Magnolia',
+  'Crape myrtle': 'Júpiter',
+  'Olive': 'Olivo',
+  'Callery pear': 'Peral de Callery',
+  'Apple': 'Manzano',
+  'Cherry': 'Cerezo',
+  'Plum': 'Ciruelo',
+  'Peach': 'Durazno',
+  'Fig': 'Higuera',
+  'Citrus': 'Cítricos',
+  'Avocado': 'Aguacate',
+  'Birch': 'Abedul',
+  'Willow': 'Sauce',
+  'Cottonwood': 'Álamo de Frémont',
+  'Ash': 'Fresno',
+  'Palm': 'Palma',
+  'Madrone': 'Madroño',
+  'Strawberry tree': 'Madroño europeo',
+  'Chinese pistache': 'Pistache chino',
+  'Ginkgo': 'Ginkgo',
+  'Jacaranda': 'Jacaranda',
+  'Purple leaf plum': 'Ciruelo de hoja púrpura',
+};
+
+/** Saved choice first, then the device's language, then English. */
+function detectLanguage() {
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved && LANGUAGES[saved]) return saved;
+  } catch (e) { /* storage blocked: fall through to the device language */ }
+  const device = String(navigator.language || '').slice(0, 2).toLowerCase();
+  return LANGUAGES[device] ? device : 'en';
+}
+
+let lang = detectLanguage();
+
+/** Translate an English string, filling {placeholders} from `vars`. */
+function t(key, vars) {
+  const table = STRINGS[lang];
+  const text = (table && table[key]) || key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (m, name) => (name in vars ? vars[name] : m));
+}
+
+/** Translate a stored list of vocabulary values for display. */
+const tList = (list, separator) => (list || []).map(item => t(item)).join(separator || ', ');
+
+/** Translate a label only if the app wrote it, leaving anything user-typed alone. */
+const stockLabel = text => (STOCK_LABELS.has(text) ? t(text) : text);
+
+/** Locale for dates and numbers. English keeps the device's own regional format. */
+function uiLocale() {
+  if (LANGUAGES[lang].locale) return LANGUAGES[lang].locale;
+  return String(navigator.language || '').toLowerCase().startsWith('en') ? undefined : 'en-US';
+}
+
+function setLanguage(next) {
+  lang = LANGUAGES[next] ? next : 'en';
+  try { localStorage.setItem(LANG_KEY, lang); } catch (e) { /* lasts this session only */ }
+  applyLanguage();
+}
+
+/* -------- Text written in the page's HTML ---------------------------------- */
+
+/* The markup keeps its English, so the page still reads normally as source. At startup
+   every piece of it is recorded along with that English; switching language then writes
+   the translation back through those references.
+
+   Only what exists at startup is ever recorded, which is what makes this safe: the page
+   holds no project data at that point, so user text can never be swept up. A dynamic
+   element that has since been repainted holds a new text node, and the old reference
+   simply goes dead. An element marked data-i18n-html is translated as one unit, for
+   sentences with markup inside them that would not survive being split word by word. */
+const staticText = [];      // { node, key, lead, trail }
+const staticHtml = [];      // { el, key }
+const staticAttrs = [];     // { el, attr, key }
+const STATIC_ATTRS = ['title', 'placeholder', 'aria-label', 'alt'];
+let baseTitle = '';
+
+const squeeze = s => s.replace(/\s+/g, ' ').trim();
+const hasWords = s => /\p{L}/u.test(s);
+
+function captureStaticText() {
+  baseTitle = squeeze(document.title);
+  const walk = el => {
+    STATIC_ATTRS.forEach(attr => {
+      const value = el.getAttribute(attr);
+      if (value && hasWords(value)) staticAttrs.push({ el: el, attr: attr, key: squeeze(value) });
+    });
+    if (el.hasAttribute('data-i18n-html')) {
+      staticHtml.push({ el: el, key: squeeze(el.innerHTML) });
+      return;
+    }
+    Array.from(el.childNodes).forEach(child => {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        if (child.tagName !== 'SCRIPT') walk(child);
+      } else if (child.nodeType === Node.TEXT_NODE && hasWords(child.nodeValue)) {
+        const raw = child.nodeValue;
+        staticText.push({
+          node: child, key: squeeze(raw),
+          lead: /^\s*/.exec(raw)[0], trail: /\s*$/.exec(raw)[0],
+        });
+      }
+    });
+  };
+  walk(document.body);
+}
+
+function paintStaticText() {
+  document.title = t(baseTitle);
+  staticText.forEach(s => {
+    if (s.node.isConnected) s.node.nodeValue = s.lead + t(s.key) + s.trail;
+  });
+  staticHtml.forEach(s => { s.el.innerHTML = t(s.key); });
+  staticAttrs.forEach(s => { s.el.setAttribute(s.attr, t(s.key)); });
+}
+
+/* ============================================================================
    2. UTILITIES
    ========================================================================== */
 
@@ -1030,6 +1855,9 @@ function esc(s) {
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
+/** Lowercase with accents removed, so "Álamo" and "alamo" compare equal. */
+const fold = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 /** Number or null — blank strings must not become 0, which would be a false reading. */
 function numOrNull(v) {
   if (v === '' || v == null) return null;
@@ -1041,15 +1869,15 @@ function fmtDate(iso) {
   if (!iso) return '';
   const d = new Date(iso.length === 10 ? iso + 'T12:00:00' : iso);
   return Number.isNaN(d.getTime()) ? iso
-    : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    : d.toLocaleDateString(uiLocale(), { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function fmtDateTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso
-    : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric',
-                                    hour: 'numeric', minute: '2-digit' });
+    : d.toLocaleString(uiLocale(), { year: 'numeric', month: 'short', day: 'numeric',
+                                     hour: 'numeric', minute: '2-digit' });
 }
 
 function fmtBytes(n) {
@@ -1181,7 +2009,7 @@ function newStructure(x, y, w, h) {
  * v2: normalized coords, history[]/events[], photos[]/visits[] present but unused.
  */
 function migrate(data) {
-  if (!data || typeof data !== 'object') throw new Error('Not a project file.');
+  if (!data || typeof data !== 'object') throw new Error(t('Not a project file.'));
 
   if (data.schemaVersion === SCHEMA_VERSION) return normalizeV3(data);
   if (data.schemaVersion === 2) return migrateV2toV3(data);
@@ -1381,29 +2209,33 @@ const ORDINANCES = {
     /* Heritage species. `genus` matches the botanical name; `keywords` match the
        common name, so free-typed entries still classify. */
     heritageSpecies: [
-      { label: 'All oaks',            genus: 'quercus',            keywords: ['oak'] },
-      { label: 'Pecan',               genus: 'carya illinoinensis', keywords: ['pecan'] },
-      { label: 'Texas ash',           genus: 'fraxinus texensis',  keywords: ['texas ash'] },
-      { label: 'Bald cypress',        genus: 'taxodium',           keywords: ['bald cypress'] },
-      { label: 'American elm',        genus: 'ulmus americana',    keywords: ['american elm'] },
-      { label: 'Texas madrone',       genus: 'arbutus xalapensis', keywords: ['madrone'] },
-      { label: 'Bigtooth maple',      genus: 'acer grandidentatum', keywords: ['bigtooth maple'] },
-      { label: 'Arizona walnut',      genus: 'juglans major',      keywords: ['arizona walnut'] },
-      { label: 'Eastern black walnut',genus: 'juglans nigra',      keywords: ['black walnut'] },
+      { label: 'All oaks',            genus: 'quercus',            keywords: ['oak', 'encino', 'roble'] },
+      { label: 'Pecan',               genus: 'carya illinoinensis', keywords: ['pecan', 'nogal pecanero', 'nuez pecana'] },
+      { label: 'Texas ash',           genus: 'fraxinus texensis',  keywords: ['texas ash', 'fresno de texas'] },
+      { label: 'Bald cypress',        genus: 'taxodium',           keywords: ['bald cypress', 'cipres calvo'] },
+      { label: 'American elm',        genus: 'ulmus americana',    keywords: ['american elm', 'olmo americano'] },
+      { label: 'Texas madrone',       genus: 'arbutus xalapensis', keywords: ['madrone', 'madrono de texas'] },
+      { label: 'Bigtooth maple',      genus: 'acer grandidentatum', keywords: ['bigtooth maple', 'arce de dientes grandes'] },
+      { label: 'Arizona walnut',      genus: 'juglans major',      keywords: ['arizona walnut', 'nogal de arizona'] },
+      { label: 'Eastern black walnut',genus: 'juglans nigra',      keywords: ['black walnut', 'nogal negro'] },
       /* Cedar elm appears on several published summaries of the ordinance but not
          on the City's current species list. Flagged rather than silently included
          or silently dropped — either would be a guess presented as fact. */
-      { label: 'Cedar elm', genus: 'ulmus crassifolia', keywords: ['cedar elm'], disputed: true },
+      { label: 'Cedar elm', genus: 'ulmus crassifolia', keywords: ['cedar elm', 'olmo cedro'], disputed: true },
+      /* In Spanish a bare "nogal" can mean pecan or walnut. Both of the common ones are
+         Heritage, so a free-typed "nogal" must not quietly fall through to Protected.
+         Last in the list, so the specific names above win. */
+      { label: 'Pecan or walnut', keywords: ['nogal'] },
     ],
 
     /* Commonly cited as removable regardless of size. The authoritative list lives
        in the Land Development Code; treat these as a prompt to check, not a ruling. */
     exemptSpecies: [
-      { label: 'Ashe juniper', genus: 'juniperus ashei', keywords: ['ashe juniper', 'mountain cedar'] },
-      { label: 'Chinaberry',   genus: 'melia azedarach', keywords: ['chinaberry'] },
-      { label: 'Ligustrum',    genus: 'ligustrum',       keywords: ['ligustrum', 'privet'] },
-      { label: 'Paper mulberry', genus: 'broussonetia',  keywords: ['paper mulberry'] },
-      { label: 'Chinese tallow', genus: 'triadica sebifera', keywords: ['chinese tallow', 'popcorn tree'] },
+      { label: 'Ashe juniper', genus: 'juniperus ashei', keywords: ['ashe juniper', 'mountain cedar', 'enebro de ashe', 'cedro de montana'] },
+      { label: 'Chinaberry',   genus: 'melia azedarach', keywords: ['chinaberry', 'paraiso'] },
+      { label: 'Ligustrum',    genus: 'ligustrum',       keywords: ['ligustrum', 'privet', 'ligustro', 'trueno'] },
+      { label: 'Paper mulberry', genus: 'broussonetia',  keywords: ['paper mulberry', 'morera de papel'] },
+      { label: 'Chinese tallow', genus: 'triadica sebifera', keywords: ['chinese tallow', 'popcorn tree', 'sebo chino', 'arbol del sebo'] },
     ],
 
     note: 'Advisory only. Confirm status with the City Arborist before relying on it '
@@ -1499,8 +2331,10 @@ const activeOrdinance = () => ORDINANCES[state.project.ordinance] || ORDINANCES.
 
 /** Does this tree's species match one of `list`? Returns the matched entry. */
 function matchSpecies(tree, list) {
-  const common = String(tree.species || '').toLowerCase();
-  const botanical = String(tree.botanical || '').toLowerCase();
+  /* Folded because Spanish names are typed with or without their accents, and a
+     missed match here would understate a tree's legal status. */
+  const common = fold(tree.species);
+  const botanical = fold(tree.botanical);
   if (!common && !botanical) return null;
 
   return (list || []).find(entry => {
@@ -1524,22 +2358,23 @@ function classifyTree(tree) {
 
   const exempt = matchSpecies(tree, rules.exemptSpecies);
   if (exempt) {
-    reasons.push(exempt.label + ' is commonly listed as exempt from permitting at any size.');
+    reasons.push(t('{species} is commonly listed as exempt from permitting at any size.',
+      { species: t(exempt.label) }));
     return { level: 'exempt', diameter: diameter, reasons: reasons, verify: true };
   }
 
   if (diameter == null) {
     return { level: 'none', diameter: null, verify: false,
-             reasons: ['Record a diameter to determine ordinance status.'] };
+             reasons: [t('Record a diameter to determine ordinance status.')] };
   }
 
   const heritage = matchSpecies(tree, rules.heritageSpecies);
   if (heritage && diameter >= rules.heritageThresholdIn) {
-    reasons.push(heritage.label + ' at ' + fmtIn(diameter) + '" meets the '
-      + rules.heritageThresholdIn + '" Heritage threshold.');
+    reasons.push(t('{species} at {d}" meets the {n}" Heritage threshold.',
+      { species: t(heritage.label), d: fmtIn(diameter), n: rules.heritageThresholdIn }));
     if (heritage.disputed) {
-      reasons.push('Note: ' + heritage.label + ' appears on some published lists of the '
-        + 'ordinance but not the City\'s current species list — confirm this one.');
+      reasons.push(t('Note: {species} appears on some published lists of the ordinance but '
+        + 'not the City\'s current species list — confirm this one.', { species: t(heritage.label) }));
     }
     return { level: 'heritage', diameter: diameter, reasons: reasons, verify: true };
   }
@@ -1547,18 +2382,19 @@ function classifyTree(tree) {
   const type = state.project.propertyType === 'commercial' ? 'commercial' : 'residential';
   const threshold = rules.protectedThresholdIn[type];
   if (diameter >= threshold) {
-    reasons.push(fmtIn(diameter) + '" meets the ' + threshold + '" Protected threshold for '
-      + type + ' property.');
+    reasons.push(t('{d}" meets the {n}" Protected threshold for {type} property.',
+      { d: fmtIn(diameter), n: threshold, type: t(type) }));
     if (heritage) {
-      reasons.push('A ' + heritage.label + ' becomes Heritage at '
-        + rules.heritageThresholdIn + '" — this one is '
-        + Math.round((rules.heritageThresholdIn - diameter) * 10) / 10 + '" short.');
+      reasons.push(t('A {species} becomes Heritage at {n}" — this one is {short}" short.', {
+        species: t(heritage.label), n: rules.heritageThresholdIn,
+        short: Math.round((rules.heritageThresholdIn - diameter) * 10) / 10,
+      }));
     }
     return { level: 'protected', diameter: diameter, reasons: reasons, verify: true };
   }
 
-  reasons.push(fmtIn(diameter) + '" is below the ' + threshold + '" Protected threshold for '
-    + type + ' property.');
+  reasons.push(t('{d}" is below the {n}" Protected threshold for {type} property.',
+    { d: fmtIn(diameter), n: threshold, type: t(type) }));
   return { level: 'none', diameter: diameter, reasons: reasons, verify: false };
 }
 
@@ -1921,10 +2757,10 @@ const Photos = {
         console.error('Photo import failed for', file.name, err);
         const heic = /\.(heic|heif)$/i.test(file.name) || /hei[cf]/i.test(file.type || '');
         setStatus(heic
-          ? 'Could not read "' + file.name + '" — this browser cannot decode HEIC. '
+          ? t('Could not read "{name}" — this browser cannot decode HEIC. '
             + 'Set your iPhone camera to "Most Compatible" (Settings → Camera → Formats) '
-            + 'so it saves JPEG instead.'
-          : 'Could not read photo "' + file.name + '".', 'err');
+            + 'so it saves JPEG instead.', { name: file.name })
+          : t('Could not read photo "{name}".', { name: file.name }), 'err');
       }
     }
     if (added) {
@@ -2560,7 +3396,7 @@ const Recorder = {
   async start(target) {
     if (this.isRecording()) return;
     if (!this.supported()) {
-      setStatus('This browser cannot record audio.', 'err');
+      setStatus(t('This browser cannot record audio.'), 'err');
       return;
     }
 
@@ -2575,8 +3411,8 @@ const Recorder = {
       });
     } catch (err) {
       setStatus(err && err.name === 'NotAllowedError'
-        ? 'Microphone permission was declined. Allow it in your browser settings to record.'
-        : 'Could not open the microphone: ' + ((err && err.message) || err), 'err');
+        ? t('Microphone permission was declined. Allow it in your browser settings to record.')
+        : t('Could not open the microphone: {detail}', { detail: (err && err.message) || err }), 'err');
       return;
     }
 
@@ -2587,7 +3423,7 @@ const Recorder = {
              : { audioBitsPerSecond: AUDIO_BITS_PER_SECOND });
     } catch (err) {
       this.releaseStream();
-      setStatus('Could not start recording: ' + ((err && err.message) || err), 'err');
+      setStatus(t('Could not start recording: {detail}', { detail: (err && err.message) || err }), 'err');
       return;
     }
 
@@ -2615,12 +3451,12 @@ const Recorder = {
         await Store.put(this.chunkKey(this.session.id, seq), event.data);
       } catch (err) {
         console.error('[audio] could not persist chunk', seq, err);
-        setStatus('Storage error while recording — stop and save soon.', 'err');
+        setStatus(t('Storage error while recording — stop and save soon.'), 'err');
       }
     };
     this.recorder.onerror = event => {
       console.error('[audio] recorder error', event);
-      setStatus('Recording stopped unexpectedly. Audio captured so far was kept.', 'err');
+      setStatus(t('Recording stopped unexpectedly. Audio captured so far was kept.'), 'err');
       this.stop();
     };
 
@@ -2629,7 +3465,7 @@ const Recorder = {
     this.stream.getAudioTracks().forEach(track => {
       track.onended = () => {
         if (this.isRecording()) {
-          setStatus('Microphone was interrupted — recording saved up to that point.', 'err');
+          setStatus(t('Microphone was interrupted — recording saved up to that point.'), 'err');
           this.stop();
         }
       };
@@ -2642,8 +3478,8 @@ const Recorder = {
     this.ticker = setInterval(() => renderRecordingBar(), 1000);
     renderRecordingBar();
     render();
-    setStatus('Recording. Audio is written to storage every '
-      + (AUDIO_TIMESLICE_MS / 1000) + ' seconds, so a crash costs seconds, not the whole take.');
+    setStatus(t('Recording. Audio is written to storage every {n} seconds, so a crash costs '
+      + 'seconds, not the whole take.', { n: AUDIO_TIMESLICE_MS / 1000 }));
   },
 
   async stop() {
@@ -2679,7 +3515,7 @@ const Recorder = {
         if (chunk) parts.push(chunk);
       }
       if (!parts.length) {
-        setStatus('Nothing was captured — recording discarded.', 'err');
+        setStatus(t('Nothing was captured — recording discarded.'), 'err');
         await Store.setMeta('recordingInFlight', null);
         return;
       }
@@ -2703,10 +3539,10 @@ const Recorder = {
         label: '',
       });
       commit(before);
-      setStatus('Saved ' + fmtDuration(durationSec) + ' of audio (' + fmtBytes(blob.size) + ').');
+      setStatus(t('Saved {time} of audio ({size}).', { time: fmtDuration(durationSec), size: fmtBytes(blob.size) }));
     } catch (err) {
       console.error('[audio] finalize failed', err);
-      setStatus('Could not save the recording: ' + ((err && err.message) || err), 'err');
+      setStatus(t('Could not save the recording: {detail}', { detail: (err && err.message) || err }), 'err');
     }
   },
 
@@ -2782,10 +3618,12 @@ const Recorder = {
       });
       dirty = true;
       render();          // the entry must appear immediately, not on the next repaint
-      setStatus('Recovered ' + fmtDuration(approxSec) + ' of audio from an interrupted '
-        + 'recording (' + fmtBytes(blob.size) + '). It is in the '
-        + (flight.treeUid ? 'tree’s voice notes' : 'Visits tab') + ' — delete it if you '
-        + 'do not want it.');
+      setStatus(t(flight.treeUid
+        ? 'Recovered {time} of audio from an interrupted recording ({size}). It is in the '
+          + 'tree’s voice notes — delete it if you do not want it.'
+        : 'Recovered {time} of audio from an interrupted recording ({size}). It is in the '
+          + 'Visits tab — delete it if you do not want it.',
+        { time: fmtDuration(approxSec), size: fmtBytes(blob.size) }));
     } catch (err) {
       console.warn('[audio] recovery failed', err);
     }
@@ -3025,7 +3863,7 @@ const ZIP = (function () {
     for (let i = bytes.length - 22; i >= scanFloor; i--) {
       if (view.getUint32(i, true) === EOCD_SIG) { eocd = i; break; }
     }
-    if (eocd < 0) throw new Error('Not a ZIP file (no end-of-central-directory record).');
+    if (eocd < 0) throw new Error(t('Not a ZIP file (no end-of-central-directory record).'));
 
     const count         = view.getUint16(eocd + 10, true);
     let   centralCursor = view.getUint32(eocd + 16, true);
@@ -3033,7 +3871,7 @@ const ZIP = (function () {
 
     for (let n = 0; n < count; n++) {
       if (view.getUint32(centralCursor, true) !== CENTRAL_SIG) {
-        throw new Error('Damaged ZIP central directory.');
+        throw new Error(t('Damaged ZIP central directory.'));
       }
       const method     = view.getUint16(centralCursor + 10, true);
       const compSize   = view.getUint32(centralCursor + 20, true);
@@ -3045,7 +3883,7 @@ const ZIP = (function () {
 
       /* The local header's name/extra lengths can differ from the central copy,
          so the data offset must be computed from the local header itself. */
-      if (view.getUint32(localAt, true) !== LOCAL_SIG) throw new Error('Damaged ZIP entry: ' + name);
+      if (view.getUint32(localAt, true) !== LOCAL_SIG) throw new Error(t('Damaged ZIP entry: {name}', { name: name }));
       const localNameLen  = view.getUint16(localAt + 26, true);
       const localExtraLen = view.getUint16(localAt + 28, true);
       const dataAt = localAt + 30 + localNameLen + localExtraLen;
@@ -3055,7 +3893,7 @@ const ZIP = (function () {
         let content;
         if (method === 0)      content = payload;
         else if (method === 8) content = await inflateRaw(payload);
-        else throw new Error('Unsupported compression in ZIP entry: ' + name);
+        else throw new Error(t('Unsupported compression in ZIP entry: {name}', { name: name }));
         files.set(name, content);
       }
 
@@ -3148,7 +3986,7 @@ function vbToFt(units) {
 function fmtDistance(feet) {
   if (feet == null) return '—';
   if (state.scale.units === 'm') return (feet * M_PER_FT).toFixed(1) + ' m';
-  return feet < 10 ? feet.toFixed(1) + ' ft' : Math.round(feet) + ' ft';
+  return (feet < 10 ? feet.toFixed(1) : Math.round(feet)) + ' ' + t('ft');
 }
 
 /* -------- Element geometry helpers ---------------------------------------- */
@@ -3337,7 +4175,7 @@ function renderStructures() {
           + ' fill-opacity="' + (s.opacity == null ? 0.14 : s.opacity) + '"/>';
 
     if (state.layers.labels && s.label) {
-      html += '<text x="' + (x + 5) + '" y="' + (y + 15) + '">' + esc(s.label) + '</text>';
+      html += '<text x="' + (x + 5) + '" y="' + (y + 15) + '">' + esc(stockLabel(s.label)) + '</text>';
     }
     if (isSel) {
       /* Corner handle, bottom-right, for resizing. */
@@ -3485,18 +4323,22 @@ function setTool(next) {
   const view = $('#view');
   view.classList.toggle('placing', next !== 'select');
 
-  const hints = {
-    select:  '',
-    tree:    'Tap the plan to place a tree.',
-    box:     'Drag on the plan to draw a structure or area.',
-    scale:   'Drag along a known distance — the survey scale bar, a property line, a building face.',
-    measure: 'Drag to measure. Release to keep it on screen; press Esc to clear.',
-  };
-  showHint(hints[next]);
+  showHint(toolHint(next));
   clearOverlay();
   /* The active tool decides whether the empty-state message or the blank canvas is
      shown, so the view has to be re-evaluated on every tool change. */
   render();
+}
+
+function toolHint(name) {
+  const hints = {
+    select:  '',
+    tree:    t('Tap the plan to place a tree.'),
+    box:     t('Drag on the plan to draw a structure or area.'),
+    scale:   t('Drag along a known distance — the survey scale bar, a property line, a building face.'),
+    measure: t('Drag to measure. Release to keep it on screen; press Esc to clear.'),
+  };
+  return hints[name];
 }
 
 function showHint(text) {
@@ -3591,7 +4433,7 @@ function onPointerDown(evt) {
     setTool('select');
     showTab('Selected');
     commit(before);
-    setStatus('Tree ' + tree.treeId + ' placed. Fill in its details on the right.');
+    setStatus(t('Tree {id} placed. Fill in its details on the right.', { id: tree.treeId }));
     return;
   }
 
@@ -3703,7 +4545,7 @@ function onPointerMove(evt) {
       const feet = vbToFt(units);
       drawMeasureLine(gesture.x1, gesture.y1, gesture.x2, gesture.y2,
         gesture.mode === 'measure'
-          ? (feet == null ? 'set scale first' : fmtDistance(feet))
+          ? (feet == null ? t('set scale first') : fmtDistance(feet))
           : (feet == null ? '' : fmtDistance(feet)));
       break;
     }
@@ -3770,8 +4612,8 @@ function onPointerUp(evt) {
       } else {
         /* Measurement stays on screen until Esc or the next action. */
         setStatus(hasScale()
-          ? 'Measured ' + fmtDistance(vbToFt(units))
-          : 'Calibrate the plan scale first — measurements need a known reference.');
+          ? t('Measured {distance}', { distance: fmtDistance(vbToFt(units)) })
+          : t('Calibrate the plan scale first — measurements need a known reference.'));
       }
       break;
     }
@@ -3818,23 +4660,23 @@ async function deleteSelected() {
   if (!selection) return;
 
   if (selection.type === 'tree') {
-    const t = selectedTree();
-    if (!t) return;
+    const tree = selectedTree();
+    if (!tree) return;
     const weight = [];
-    if (t.observations.length) weight.push(t.observations.length + ' observation(s)');
-    if (t.photos.length)       weight.push(t.photos.length + ' photo(s)');
-    if (t.history.length)      weight.push(t.history.length + ' note(s)');
+    if (tree.observations.length) weight.push(t('{n} observation(s)', { n: tree.observations.length }));
+    if (tree.photos.length)       weight.push(t('{n} photo(s)', { n: tree.photos.length }));
+    if (tree.history.length)      weight.push(t('{n} note(s)', { n: tree.history.length }));
     if (weight.length && !confirm(
-      'Delete tree ' + t.treeId + '?\n\nThis permanently removes ' + weight.join(', ') + '.'
+      t('Delete tree {id}?\n\nThis permanently removes {what}.', { id: tree.treeId, what: weight.join(', ') })
     )) return;
 
     const before = snapshot();
     /* Photo blobs stay in storage so undo can restore this tree intact; they are
        simply not written to the next package. See Photos.remove. */
-    state.trees = state.trees.filter(x => x.uid !== t.uid);
+    state.trees = state.trees.filter(x => x.uid !== tree.uid);
     selection = null;
     commit(before);
-    setStatus('Tree ' + t.treeId + ' deleted.');
+    setStatus(t('Tree {id} deleted.', { id: tree.treeId }));
   } else {
     const s = selectedStructure();
     if (!s) return;
@@ -3894,7 +4736,7 @@ function renderSidebar() {
 function renderChips(container, options, selected) {
   container.innerHTML = options.map(opt =>
     '<button type="button" class="chip" data-value="' + esc(opt) + '" aria-pressed="'
-    + (selected.indexOf(opt) >= 0) + '">' + esc(opt) + '</button>'
+    + (selected.indexOf(opt) >= 0) + '">' + esc(t(opt)) + '</button>'
   ).join('');
 }
 
@@ -3922,11 +4764,11 @@ function renderTreeEditor(tree) {
   const visit = activeVisit();
   const obs = observationForActiveVisit(tree, false);
   const badge = $('#obsVisitBadge');
-  badge.textContent = visit ? (visit.label ? visit.label + ' · ' : '') + fmtDate(visit.date) : '—';
+  badge.textContent = visit ? (visit.label ? stockLabel(visit.label) + ' · ' : '') + fmtDate(visit.date) : '—';
   badge.className = 'badge' + (obs ? '' : ' warn');
   badge.title = obs
-    ? 'An observation exists for this visit.'
-    : 'No observation recorded for this visit yet — editing any field below will create one.';
+    ? t('An observation exists for this visit.')
+    : t('No observation recorded for this visit yet — editing any field below will create one.');
 
   /* Show the active visit's values if present; otherwise preview the carried-forward
      values from the last visit so the field is not misleadingly blank. */
@@ -3944,15 +4786,15 @@ function renderTreeEditor(tree) {
 
   const dbhInput = $('#fDbh');
   dbhInput.readOnly = multi;
-  dbhInput.title = multi ? 'Calculated from the stem sizes below.' : '';
+  dbhInput.title = multi ? t('Calculated from the stem sizes below.') : '';
   dbhInput.style.background = multi ? '#f2f5f2' : '';
   renderTrunks(shown);
 
   /* A multi-trunk total is a diameter by definition (largest + half of each other),
      so that field shows a diameter whatever mode the stems are entered in. */
   $('#fDbhLabel').textContent = multi
-    ? 'Diameter (in), calculated'
-    : (mode === 'circumference' ? 'Circumference (in)' : 'Diameter (in)');
+    ? t('Diameter (in), calculated')
+    : t(mode === 'circumference' ? 'Circumference (in)' : 'Diameter (in)');
 
   const dbhText = multi
     ? (shown && shown.dbhIn != null ? fmtIn(shown.dbhIn) : '')
@@ -3971,7 +4813,7 @@ function renderTreeEditor(tree) {
   renderOrdinance(tree);
   renderPhotoGrid(tree);
   renderAudioList('#treeAudioList', r => r.treeUid === tree.uid,
-    'No voice notes for this tree yet.');
+    t('No voice notes for this tree yet.'));
   $('#btnRecTree').disabled = Recorder.isRecording();
   renderTreeLocation(tree);
   renderObsHistory(tree);
@@ -3987,9 +4829,8 @@ function renderTrunks(obs) {
   const trunks = (obs && obs.trunks) || [];
   const rules = activeOrdinance();
 
-  $('#trunkRuleNote').textContent = 'Measure every stem at '
-    + (rules.measureHeightFt || 4.5) + ' ft above grade. The largest stem counts in '
-    + 'full; each additional stem counts at half.';
+  $('#trunkRuleNote').textContent = t('Measure every stem at {h} ft above grade. The largest '
+    + 'stem counts in full; each additional stem counts at half.', { h: rules.measureHeightFt || 4.5 });
 
   /* Highlight which stem is being counted at full width — exactly one, even on a tie. */
   let largestIdx = -1, largestVal = -Infinity;
@@ -4013,19 +4854,19 @@ function renderTrunks(obs) {
   }
 
   const mode = measureModeOf(obs);
-  const unitWord = mode === 'circumference' ? 'circumference' : 'diameter';
+  const unitWord = t(mode === 'circumference' ? 'circumference' : 'diameter');
 
   Array.from(host.querySelectorAll('.trunk-row')).forEach((row, i) => {
     const input = row.querySelector('[data-trunk]');
     const remove = row.querySelector('[data-rm-trunk]');
     input.setAttribute('data-trunk', i);
-    input.setAttribute('aria-label', 'Stem ' + (i + 1) + ' ' + unitWord + ' in inches');
+    input.setAttribute('aria-label', t('Stem {n} {unit} in inches', { n: i + 1, unit: unitWord }));
     remove.setAttribute('data-rm-trunk', i);
-    remove.setAttribute('aria-label', 'Remove stem ' + (i + 1));
+    remove.setAttribute('aria-label', t('Remove stem {n}', { n: i + 1 }));
 
     row.classList.toggle('largest', i === largestIdx);
     row.querySelector('.n').textContent =
-      'Stem ' + (i + 1) + (i === largestIdx ? ' ×1' : ' ×½');
+      t('Stem {n}', { n: i + 1 }) + (i === largestIdx ? ' ×1' : ' ×½');
 
     /* Never touch the field being typed in — same guard as setValue, unless the
        unit itself just changed. */
@@ -4040,13 +4881,13 @@ function renderTrunks(obs) {
   const counted = trunks.filter(n => Number.isFinite(n) && n > 0).length;
   const badge = $('#trunkResult');
   if (total == null) {
-    badge.textContent = 'Enter stem ' + unitWord;
+    badge.textContent = t('Enter stem {unit}', { unit: unitWord });
     badge.className = 'badge warn';
   } else {
     /* The total is always a diameter — that is what the ordinance is written in. */
     badge.textContent = counted > 1
-      ? counted + ' stems → ' + total + '" diameter'
-      : total + '" diameter';
+      ? t('{n} stems → {d}" diameter', { n: counted, d: total })
+      : t('{d}" diameter', { d: total });
     badge.className = 'badge';
   }
 }
@@ -4060,13 +4901,13 @@ function renderOrdinance(tree) {
   if (!status) return;
 
   const badge = $('#ordinanceBadge');
-  badge.textContent = ORDINANCE_LABELS[status.level] || '—';
+  badge.textContent = ORDINANCE_LABELS[status.level] ? t(ORDINANCE_LABELS[status.level]) : '—';
   badge.className = 'badge ord-' + status.level;
 
   const rules = activeOrdinance();
   let html = '<ul>' + status.reasons.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>';
   if (status.verify && rules.note) {
-    html += '<span class="verify-note">' + esc(rules.note) + '</span>';
+    html += '<span class="verify-note">' + esc(t(rules.note)) + '</span>';
   }
   $('#ordinanceDetail').innerHTML = html;
 
@@ -4075,24 +4916,25 @@ function renderOrdinance(tree) {
   const el = $('#crzText');
   if (radiusFt == null) { el.textContent = ''; return; }
 
-  let text = '<b>Critical root zone:</b> ' + fmtDistance(radiusFt) + ' radius'
-    + ' (½ CRZ ' + fmtDistance(radiusFt / 2) + ', ¼ CRZ ' + fmtDistance(radiusFt / 4) + ').';
+  let text = t('<b>Critical root zone:</b> {r} radius (½ CRZ {half}, ¼ CRZ {quarter}).', {
+    r: fmtDistance(radiusFt), half: fmtDistance(radiusFt / 2), quarter: fmtDistance(radiusFt / 4),
+  });
 
   if (!hasScale()) {
-    text += ' Calibrate the plan scale to draw it and measure encroachment.';
+    text += ' ' + t('Calibrate the plan scale to draw it and measure encroachment.');
   } else {
     const impact = crzImpact(tree);
     if (!impact) {
-      text += ' No structures mapped yet.';
+      text += ' ' + t('No structures mapped yet.');
     } else {
       const pct = Math.round(impact.fraction * 100);
-      text += ' <b>' + pct + '%</b> covered by mapped structures';
+      text += ' ' + t('<b>{pct}%</b> covered by mapped structures', { pct: pct });
       if (impact.quarterImpacted) {
-        text += ' — <span class="err">a structure sits inside the ¼ CRZ, where no impact is permitted</span>';
+        text += ' — <span class="err">' + t('a structure sits inside the ¼ CRZ, where no impact is permitted') + '</span>';
       } else if (impact.fraction > 0.5) {
-        text += ' — <span class="err">over the 50% that must stay undisturbed</span>';
+        text += ' — <span class="err">' + t('over the 50% that must stay undisturbed') + '</span>';
       } else if (impact.fraction > 0.35) {
-        text += ' — <span class="warn">approaching the 50% limit</span>';
+        text += ' — <span class="warn">' + t('approaching the 50% limit') + '</span>';
       }
       text += '.';
     }
@@ -4101,7 +4943,7 @@ function renderOrdinance(tree) {
 }
 
 function renderStructureEditor(s) {
-  setValue($('#sLabel'), s.label);
+  setValue($('#sLabel'), stockLabel(s.label));
   setValue($('#sKind'), s.kind || 'Building');
   setValue($('#sNotes'), s.notes);
   setValue($('#sOpacity'), Math.round((s.opacity == null ? 0.14 : s.opacity) * 100));
@@ -4109,9 +4951,10 @@ function renderStructureEditor(s) {
   const wFt = vbToFt(s.width * VB_WIDTH);
   const hFt = vbToFt(s.height * vbHeight());
   $('#sSize').textContent = (wFt != null && hFt != null)
-    ? 'Approximately ' + fmtDistance(wFt) + ' × ' + fmtDistance(hFt)
-      + ' (' + Math.round(wFt * hFt).toLocaleString() + ' sq ft)'
-    : 'Calibrate the plan scale to see real dimensions.';
+    ? t('Approximately {w} × {h} ({area} sq ft)', {
+        w: fmtDistance(wFt), h: fmtDistance(hFt), area: Math.round(wFt * hFt).toLocaleString(uiLocale()),
+      })
+    : t('Calibrate the plan scale to see real dimensions.');
 }
 
 /* -------- Photos ------------------------------------------------------------ */
@@ -4127,12 +4970,12 @@ async function renderPhotoGrid(tree) {
     const marks = Annot.count(p);
     const gps = p.exif && p.exif.gps;
     return '<div class="photo" data-photo="' + esc(p.id) + '">'
-      + '<img alt="' + esc(p.caption || 'Tree photo') + '" data-slot="' + esc(p.id) + '">'
-      + '<button class="rm" data-remove="' + esc(p.id) + '" title="Remove photo">&times;</button>'
-      + (marks ? '<span class="marked" title="' + marks + ' mark(s) drawn on this photo">✎ '
+      + '<img alt="' + esc(p.caption || t('Tree photo')) + '" data-slot="' + esc(p.id) + '">'
+      + '<button class="rm" data-remove="' + esc(p.id) + '" title="' + esc(t('Remove photo')) + '">&times;</button>'
+      + (marks ? '<span class="marked" title="' + esc(t('{n} mark(s) drawn on this photo', { n: marks })) + '">✎ '
                  + marks + '</span>' : '')
       + (p.caption || gps
-          ? '<div class="cap">' + (gps ? '📍 ' : '') + esc(p.caption || 'GPS tagged') + '</div>'
+          ? '<div class="cap">' + (gps ? '📍 ' : '') + esc(p.caption || t('GPS tagged')) + '</div>'
           : '')
       + '</div>';
   }).join('');
@@ -4169,7 +5012,7 @@ async function openLightbox(tree, photoId) {
   const url = await Photos.url(Photos.key(photoId));
   $('#lightboxImg').src = url || '';
   $('#lightboxTitle').textContent =
-    'Tree ' + tree.treeId + (tree.species ? ' — ' + tree.species : '');
+    t('Tree {id}', { id: tree.treeId }) + (tree.species ? ' — ' + tree.species : '');
   $('#lightboxCaption').value = photo.caption || '';
 
   renderAnnotToolbar();
@@ -4179,17 +5022,17 @@ async function openLightbox(tree, photoId) {
 }
 
 function renderAnnotToolbar() {
-  $('#annotToolRow').innerHTML = Annot.TOOLS.map(t =>
-    '<button type="button" class="btn-sm" data-tool="' + esc(t.value) + '" aria-pressed="'
-    + (t.value === annotTool) + '">' + esc(t.label) + '</button>').join('');
+  $('#annotToolRow').innerHTML = Annot.TOOLS.map(b =>
+    '<button type="button" class="btn-sm" data-tool="' + esc(b.value) + '" aria-pressed="'
+    + (b.value === annotTool) + '">' + esc(t(b.label)) + '</button>').join('');
 
   $('#annotColorRow').innerHTML = Annot.COLORS.map(c =>
-    '<button type="button" class="swatch" data-color="' + esc(c.value) + '" title="' + esc(c.label)
-    + '" aria-label="' + esc(c.label) + '" aria-pressed="' + (c.value === annotColor)
+    '<button type="button" class="swatch" data-color="' + esc(c.value) + '" title="' + esc(t(c.label))
+    + '" aria-label="' + esc(t(c.label)) + '" aria-pressed="' + (c.value === annotColor)
     + '" style="background:' + esc(c.value) + '"></button>').join('');
 
-  const tool = Annot.TOOLS.find(t => t.value === annotTool);
-  $('#annotHint').textContent = tool ? tool.hint : '';
+  const tool = Annot.TOOLS.find(b => b.value === annotTool);
+  $('#annotHint').textContent = tool ? t(tool.hint) : '';
 }
 
 function renderAnnotations() {
@@ -4205,8 +5048,8 @@ function renderAnnotations() {
     + (annotDraft ? Annot.toSvg([annotDraft], vbH) : '');
 
   $('#annotCount').textContent = committed.length
-    ? committed.length + (committed.length === 1 ? ' mark' : ' marks')
-    : 'No marks yet';
+    ? t(committed.length === 1 ? '{n} mark' : '{n} marks', { n: committed.length })
+    : t('No marks yet');
   $('#annotUndo').disabled = !committed.length;
   $('#annotClear').disabled = !committed.length;
 }
@@ -4216,16 +5059,16 @@ function renderExifPanel(photo) {
   const visit = state.visits.find(v => v.id === photo.visitId);
   const e = photo.exif;
 
-  rows.push(['Taken', fmtDateTime(photo.takenAt)
-    + (e && e.takenAt ? '' : ' <span class="muted">(file date — no EXIF)</span>')]);
-  if (visit) rows.push(['Visit', esc(fmtDate(visit.date)) + (visit.label ? ' · ' + esc(visit.label) : '')]);
-  rows.push(['Stored', photo.w + '×' + photo.h + ' · ' + fmtBytes(photo.bytes)]);
+  rows.push([t('Taken'), fmtDateTime(photo.takenAt)
+    + (e && e.takenAt ? '' : ' <span class="muted">' + t('(file date — no EXIF)') + '</span>')]);
+  if (visit) rows.push([t('Visit'), esc(fmtDate(visit.date)) + (visit.label ? ' · ' + esc(stockLabel(visit.label)) : '')]);
+  rows.push([t('Stored'), photo.w + '×' + photo.h + ' · ' + fmtBytes(photo.bytes)]);
 
   if (e) {
-    if (e.camera) rows.push(['Camera', esc(e.camera)]);
+    if (e.camera) rows.push([t('Camera'), esc(e.camera)]);
     if (e.originalPixels) {
       const mp = (e.originalPixels.w * e.originalPixels.h / 1e6).toFixed(1);
-      rows.push(['Original', e.originalPixels.w + '×' + e.originalPixels.h + ' (' + mp + ' MP)']);
+      rows.push([t('Original'), e.originalPixels.w + '×' + e.originalPixels.h + ' (' + mp + ' MP)']);
     }
     if (e.shot) {
       const bits = [];
@@ -4237,7 +5080,7 @@ function renderExifPanel(photo) {
           : '1/' + Math.round(1 / e.shot.exposureSec) + 's');
       }
       if (e.shot.iso) bits.push('ISO ' + e.shot.iso);
-      if (bits.length) rows.push(['Exposure', bits.join(' · ')]);
+      if (bits.length) rows.push([t('Exposure'), bits.join(' · ')]);
     }
   }
 
@@ -4250,18 +5093,18 @@ function renderExifPanel(photo) {
       '<div class="muted">' + esc(EXIF.formatLatLon(g.lat, g.lon)) + '</div>',
     ];
     const detail = [];
-    if (g.accuracyM != null) detail.push('±' + g.accuracyM + ' m reported');
+    if (g.accuracyM != null) detail.push(t('±{n} m reported', { n: g.accuracyM }));
     else if (g.dop != null) detail.push('DOP ' + g.dop);
-    if (g.altitudeM != null) detail.push(Math.round(g.altitudeM) + ' m elevation');
+    if (g.altitudeM != null) detail.push(t('{n} m elevation', { n: Math.round(g.altitudeM) }));
     if (g.bearingDeg != null) {
-      detail.push('facing ' + Math.round(g.bearingDeg) + '° ' + EXIF.compass(g.bearingDeg)
+      detail.push(t('facing {deg}° {dir}', { deg: Math.round(g.bearingDeg), dir: EXIF.compass(g.bearingDeg) })
         + (g.bearingRef === 'magnetic' ? ' (mag)' : ''));
     }
     if (detail.length) lines.push('<div class="muted">' + esc(detail.join(' · ')) + '</div>');
     html += '<div class="gps">' + lines.join('') + '</div>';
   } else {
-    html += '<p class="muted" style="margin:9px 0 0">No GPS in this photo. Phones omit it when '
-      + 'location access is off for the camera, and screenshots or edited copies lose it.</p>';
+    html += '<p class="muted" style="margin:9px 0 0">' + t('No GPS in this photo. Phones omit it when '
+      + 'location access is off for the camera, and screenshots or edited copies lose it.') + '</p>';
   }
 
   $('#exifPanel').innerHTML = html;
@@ -4288,8 +5131,8 @@ async function renderAudioList(hostSelector, filter, emptyText) {
     '<div class="audio-item" data-rec="' + esc(r.id) + '">'
     + '<span class="dur">' + esc(fmtDuration(r.durationSec)) + '</span>'
     + '<span class="meta">' + esc(fmtDateTime(r.startedAt)) + ' · ' + esc(fmtBytes(r.bytes))
-    + (r.label ? ' · ' + esc(r.label) : '') + '</span>'
-    + '<button class="btn-sm danger" data-rec-remove="' + esc(r.id) + '">Delete</button>'
+    + (r.label ? ' · ' + esc(stockLabel(r.label)) : '') + '</span>'
+    + '<button class="btn-sm danger" data-rec-remove="' + esc(r.id) + '">' + esc(t('Delete')) + '</button>'
     + '<audio controls preload="none" data-rec-audio="' + esc(r.id) + '"></audio>'
     + '</div>').join('');
 
@@ -4314,13 +5157,13 @@ function renderRecordingBar() {
   const tree = session && session.treeUid ? treeByUid(session.treeUid) : null;
   $('#recTime').textContent = fmtDuration(Recorder.elapsedSec());
   $('#recTarget').textContent = tree
-    ? 'Tree ' + tree.treeId + (tree.species ? ' · ' + tree.species : '')
-    : 'Walk-through';
+    ? t('Tree {id}', { id: tree.treeId }) + (tree.species ? ' · ' + tree.species : '')
+    : t('Walk-through');
   const chunks = session ? session.seq : 0;
   $('#recSaved').textContent = chunks
-    ? 'saved through ' + fmtDuration(chunks * (AUDIO_TIMESLICE_MS / 1000))
+    ? t('saved through {time}', { time: fmtDuration(chunks * (AUDIO_TIMESLICE_MS / 1000)) })
       + ' · ' + fmtBytes(session.bytes)
-    : 'starting…';
+    : t('starting…');
 }
 
 /* -------- Tree location, averaged from photo GPS ---------------------------- */
@@ -4334,15 +5177,15 @@ function renderTreeLocation(tree) {
   const parts = [
     '<b>' + loc.lat.toFixed(6) + ', ' + loc.lon.toFixed(6) + '</b>',
     esc(EXIF.formatLatLon(loc.lat, loc.lon)),
-    'Averaged from ' + loc.samples + ' photo' + (loc.samples === 1 ? '' : 's') + '.',
+    t(loc.samples === 1 ? 'Averaged from {n} photo.' : 'Averaged from {n} photos.', { n: loc.samples }),
   ];
-  if (loc.accuracyM != null) parts.push('Camera reported ±' + loc.accuracyM + ' m.');
+  if (loc.accuracyM != null) parts.push(t('Camera reported ±{n} m.', { n: loc.accuracyM }));
   /* Disagreement between fixes is the more honest number, so lead with it when large. */
   if (loc.samples > 1) {
     parts.push(loc.spreadM > 15
-      ? '<span class="warn">Fixes disagree by ' + Math.round(loc.spreadM)
-        + ' m</span> — typical under canopy; treat this as approximate.'
-      : 'Fixes agree within ' + loc.spreadM.toFixed(1) + ' m.');
+      ? t('<span class="warn">Fixes disagree by {n} m</span> — typical under canopy; treat this as approximate.',
+          { n: Math.round(loc.spreadM) })
+      : t('Fixes agree within {n} m.', { n: loc.spreadM.toFixed(1) }));
   }
   $('#treeLocationText').innerHTML = parts.join(' ');
 }
@@ -4354,15 +5197,15 @@ function deltaHtml(current, previous, unit) {
   const d = current - previous;
   const cls = d > 0 ? 'up' : 'down';
   return ' <span class="delta ' + cls + '">' + (d > 0 ? '+' : '') + (Math.round(d * 10) / 10)
-       + ' ' + unit + '</span>';
+       + ' ' + t(unit) + '</span>';
 }
 
 function renderObsHistory(tree) {
   const host = $('#obsHistory');
   const all = sortedObservations(tree);
   if (!all.length) {
-    host.innerHTML = '<p class="empty-note">No observations yet. '
-      + 'Enter a measurement above to record one against the active visit.</p>';
+    host.innerHTML = '<p class="empty-note">' + t('No observations yet. '
+      + 'Enter a measurement above to record one against the active visit.') + '</p>';
     return;
   }
 
@@ -4375,18 +5218,18 @@ function renderObsHistory(tree) {
     const cond = conditionMeta(o.condition);
 
     const rows = [];
-    if (o.dbhIn    != null) rows.push(['DBH', fmtIn(o.dbhIn) + '"' + deltaHtml(o.dbhIn, prev && prev.dbhIn, 'in')]);
-    if (o.heightFt != null) rows.push(['Height', o.heightFt + ' ft' + deltaHtml(o.heightFt, prev && prev.heightFt, 'ft')]);
-    if (o.spreadFt != null) rows.push(['Spread', o.spreadFt + ' ft' + deltaHtml(o.spreadFt, prev && prev.spreadFt, 'ft')]);
-    if (o.condition && o.condition !== 'Unassessed') rows.push(['Condition', esc(o.condition)]);
-    if (o.priority && o.priority !== 'Not set') rows.push(['Priority', esc(o.priority)]);
-    if (o.defects && o.defects.length) rows.push(['Defects', esc(o.defects.join(', '))]);
-    if (o.recommendations && o.recommendations.length) rows.push(['Work', esc(o.recommendations.join(', '))]);
+    if (o.dbhIn    != null) rows.push([t('DBH'), fmtIn(o.dbhIn) + '"' + deltaHtml(o.dbhIn, prev && prev.dbhIn, 'in')]);
+    if (o.heightFt != null) rows.push([t('Height'), o.heightFt + ' ' + t('ft') + deltaHtml(o.heightFt, prev && prev.heightFt, 'ft')]);
+    if (o.spreadFt != null) rows.push([t('Spread'), o.spreadFt + ' ' + t('ft') + deltaHtml(o.spreadFt, prev && prev.spreadFt, 'ft')]);
+    if (o.condition && o.condition !== 'Unassessed') rows.push([t('Condition'), esc(t(o.condition))]);
+    if (o.priority && o.priority !== 'Not set') rows.push([t('Priority'), esc(t(o.priority))]);
+    if (o.defects && o.defects.length) rows.push([t('Defects'), esc(tList(o.defects))]);
+    if (o.recommendations && o.recommendations.length) rows.push([t('Work'), esc(tList(o.recommendations))]);
 
     return '<div class="entry" style="border-left-color:var(--' + cond.cls.replace('cond-', '') + ')">'
       + '<div class="when">' + esc(fmtDate(o.date))
-      + (visit && visit.label ? ' · ' + esc(visit.label) : '')
-      + (chronoIdx === all.length - 1 ? ' <span class="badge">current</span>' : '')
+      + (visit && visit.label ? ' · ' + esc(stockLabel(visit.label)) : '')
+      + (chronoIdx === all.length - 1 ? ' <span class="badge">' + t('current') + '</span>' : '')
       + '</div>'
       + (rows.length ? '<dl>' + rows.map(r => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl>' : '')
       + (o.notes ? '<div class="body" style="margin-top:5px">' + esc(o.notes) + '</div>' : '')
@@ -4397,13 +5240,13 @@ function renderObsHistory(tree) {
 function renderNoteHistory(tree) {
   const host = $('#noteHistory');
   if (!tree.history.length) {
-    host.innerHTML = '<p class="empty-note">No notes yet.</p>';
+    host.innerHTML = '<p class="empty-note">' + t('No notes yet.') + '</p>';
     return;
   }
   host.innerHTML = tree.history.slice().reverse().map(n =>
     '<div class="entry">'
     + '<div class="when">' + esc(fmtDate(n.createdAt))
-    + (n.category ? ' · ' + esc(n.category) : '') + '</div>'
+    + (n.category ? ' · ' + esc(stockLabel(n.category)) : '') + '</div>'
     + '<div class="body">' + esc(n.text) + '</div>'
     + '</div>'
   ).join('');
@@ -4412,7 +5255,7 @@ function renderNoteHistory(tree) {
 /* -------- Tree list --------------------------------------------------------- */
 
 function renderTreeList() {
-  const query = $('#treeSearch').value.trim().toLowerCase();
+  const query = fold($('#treeSearch').value.trim());
   const sort = $('#treeSort').value;
 
   let rows = state.trees.map(t => ({ tree: t, obs: latestObservation(t) }));
@@ -4420,12 +5263,13 @@ function renderTreeList() {
   if (query) {
     rows = rows.filter(r => {
       const o = r.obs;
-      const haystack = [
-        r.tree.treeId, r.tree.species, r.tree.botanical, r.tree.status,
-        o && o.condition, o && o.priority,
-        o && o.defects && o.defects.join(' '),
-        o && o.recommendations && o.recommendations.join(' '),
-      ].filter(Boolean).join(' ').toLowerCase();
+      /* Search what is on screen as well as the stored values, so "buena" finds
+         trees in Good condition when the app is in Spanish. */
+      const words = [
+        r.tree.status, o && o.condition, o && o.priority,
+      ].concat((o && o.defects) || [], (o && o.recommendations) || []).filter(Boolean);
+      const haystack = fold([r.tree.treeId, r.tree.species, r.tree.botanical]
+        .concat(words, words.map(w => t(w))).filter(Boolean).join(' '));
       return haystack.indexOf(query) >= 0;
     });
   }
@@ -4441,24 +5285,24 @@ function renderTreeList() {
   rows.sort(sorters[sort] || byId);
 
   $('#treeList').innerHTML = rows.length ? rows.map(r => {
-    const t = r.tree, o = r.obs;
+    const tree = r.tree, o = r.obs;
     const cond = conditionMeta(o && o.condition);
     const bits = [
-      t.species || 'Species not set',
-      o && o.dbhIn != null ? fmtIn(o.dbhIn) + '" DBH' : null,
-      o && o.priority && o.priority !== 'Not set' ? o.priority : null,
-      t.photos.length ? t.photos.length + ' photo' + (t.photos.length > 1 ? 's' : '') : null,
+      tree.species || t('Species not set'),
+      o && o.dbhIn != null ? fmtIn(o.dbhIn) + '" ' + t('DBH') : null,
+      o && o.priority && o.priority !== 'Not set' ? t(o.priority) : null,
+      tree.photos.length ? t(tree.photos.length > 1 ? '{n} photos' : '{n} photo', { n: tree.photos.length }) : null,
     ].filter(Boolean);
 
     return '<div class="list-item ' + cond.cls
-      + (selection && selection.uid === t.uid ? ' selected' : '') + '" data-tree="' + esc(t.uid) + '">'
+      + (selection && selection.uid === tree.uid ? ' selected' : '') + '" data-tree="' + esc(tree.uid) + '">'
       + '<span class="dot"></span>'
-      + '<span class="lead">' + esc(t.treeId) + '</span>'
+      + '<span class="lead">' + esc(tree.treeId) + '</span>'
       + '<span class="meta">' + esc(bits.join(' · ')) + '</span>'
       + '</div>';
-  }).join('') : '<div class="list-item" style="cursor:default"><span class="meta">No trees match.</span></div>';
+  }).join('') : '<div class="list-item" style="cursor:default"><span class="meta">' + t('No trees match.') + '</span></div>';
 
-  $('#treeCount').textContent = rows.length + ' of ' + state.trees.length + ' trees shown';
+  $('#treeCount').textContent = t('{n} of {total} trees shown', { n: rows.length, total: state.trees.length });
 }
 
 /* -------- Visits ------------------------------------------------------------ */
@@ -4469,7 +5313,7 @@ function renderVisitPanel() {
 
   sel.innerHTML = visits.map(v =>
     '<option value="' + esc(v.id) + '">' + esc(fmtDate(v.date))
-    + (v.label ? ' — ' + esc(v.label) : '') + '</option>'
+    + (v.label ? ' — ' + esc(stockLabel(v.label)) : '') + '</option>'
   ).join('');
   sel.value = state.activeVisitId;
 
@@ -4483,23 +5327,23 @@ function renderVisitPanel() {
   $('#btnDeleteVisit').disabled = state.visits.length <= 1;
 
   renderAudioList('#visitAudioList', r => !r.treeUid && r.visitId === state.activeVisitId,
-    'No walk-through recording for this visit yet.');
+    t('No walk-through recording for this visit yet.'));
   $('#btnRecVisit').disabled = Recorder.isRecording();
 
   $('#visitList').innerHTML = visits.slice().reverse().map(vv => {
-    const n = state.trees.reduce((c, t) => c + (t.observations.some(o => o.visitId === vv.id) ? 1 : 0), 0);
+    const n = state.trees.reduce((c, tr) => c + (tr.observations.some(o => o.visitId === vv.id) ? 1 : 0), 0);
     return '<div class="list-item' + (vv.id === state.activeVisitId ? ' selected' : '') + '"'
       + ' data-visit="' + esc(vv.id) + '">'
       + '<span class="lead">' + esc(fmtDate(vv.date)) + '</span>'
-      + '<span class="meta">' + esc(vv.label || 'Visit') + ' · ' + n + ' tree'
-      + (n === 1 ? '' : 's') + ' assessed</span></div>';
+      + '<span class="meta">' + esc(vv.label ? stockLabel(vv.label) : t('Visit')) + ' · '
+      + t(n === 1 ? '{n} tree assessed' : '{n} trees assessed', { n: n }) + '</span></div>';
   }).join('');
 }
 
 /* -------- Project ----------------------------------------------------------- */
 
 function renderProjectPanel() {
-  setValue($('#pName'), state.project.name);
+  setValue($('#pName'), stockLabel(state.project.name));
   setValue($('#pAddress'), state.project.address);
   setValue($('#pClient'), state.project.client);
   setValue($('#pArborist'), state.project.arborist);
@@ -4511,9 +5355,9 @@ function renderProjectPanel() {
 
   const fpu = feetPerVbUnit();
   $('#scaleStatus').innerHTML = fpu
-    ? 'Calibrated: <b>' + fmtDistance(state.scale.calibration.realFeet)
-      + '</b> reference. Canopy circles and measurements are live.'
-    : '<b>Not calibrated.</b> Canopy circles and distances stay hidden until you set a scale.';
+    ? t('Calibrated: <b>{distance}</b> reference. Canopy circles and measurements are live.',
+        { distance: fmtDistance(state.scale.calibration.realFeet) })
+    : t('<b>Not calibrated.</b> Canopy circles and distances stay hidden until you set a scale.');
   $('#btnClearScale').disabled = !fpu;
 
   renderSummary();
@@ -4527,34 +5371,34 @@ function renderOrdinanceSummary() {
 
   if (!rules || rules.id === 'none') {
     $('#pPropertyType').disabled = true;
-    host.innerHTML = 'No preset selected. Diameters are recorded as entered, and a '
-      + 'multi-trunk tree still totals as largest stem + half of each additional stem.';
+    host.innerHTML = t('No preset selected. Diameters are recorded as entered, and a '
+      + 'multi-trunk tree still totals as largest stem + half of each additional stem.');
     return;
   }
   $('#pPropertyType').disabled = false;
 
   const type = state.project.propertyType === 'commercial' ? 'commercial' : 'residential';
   const counts = { heritage: 0, protected: 0, exempt: 0, none: 0 };
-  state.trees.forEach(t => {
-    const c = classifyTree(t);
+  state.trees.forEach(tree => {
+    const c = classifyTree(tree);
     if (c) counts[c.level] = (counts[c.level] || 0) + 1;
   });
 
   host.innerHTML =
       '<ul>'
-    + '<li>Protected at <b>' + rules.protectedThresholdIn[type] + '"</b> on ' + type
-    + ' property; listed species become Heritage at <b>' + rules.heritageThresholdIn + '"</b>.</li>'
-    + '<li>Diameter measured at ' + rules.measureHeightFt + ' ft above grade; multi-trunk '
-    + 'totals as largest stem + ½ of each additional stem.</li>'
-    + '<li>Critical root zone radius = 1 ft per inch of diameter.</li>'
-    + rules.crzRules.map(r => '<li>' + esc(r) + '</li>').join('')
+    + '<li>' + t('Protected at <b>{n}"</b> on {type} property; listed species become Heritage at <b>{h}"</b>.',
+        { n: rules.protectedThresholdIn[type], type: t(type), h: rules.heritageThresholdIn }) + '</li>'
+    + '<li>' + t('Diameter measured at {h} ft above grade; multi-trunk totals as largest stem + ½ of '
+        + 'each additional stem.', { h: rules.measureHeightFt }) + '</li>'
+    + '<li>' + t('Critical root zone radius = 1 ft per inch of diameter.') + '</li>'
+    + rules.crzRules.map(r => '<li>' + esc(t(r)) + '</li>').join('')
     + '</ul>'
     + '<div class="row" style="margin-top:7px">'
-    + '<span class="badge ord-heritage">Heritage ' + counts.heritage + '</span>'
-    + '<span class="badge ord-protected">Protected ' + counts.protected + '</span>'
-    + '<span class="badge ord-exempt">Exempt ' + counts.exempt + '</span>'
+    + '<span class="badge ord-heritage">' + t('Heritage') + ' ' + counts.heritage + '</span>'
+    + '<span class="badge ord-protected">' + t('Protected') + ' ' + counts.protected + '</span>'
+    + '<span class="badge ord-exempt">' + t('Exempt') + ' ' + counts.exempt + '</span>'
     + '</div>'
-    + '<span class="verify-note">' + esc(rules.note) + '</span>';
+    + '<span class="verify-note">' + esc(t(rules.note)) + '</span>';
 }
 
 function renderSummary() {
@@ -4562,32 +5406,32 @@ function renderSummary() {
   CONDITIONS.forEach(c => { counts[c.value] = 0; });
   let needsWork = 0;
 
-  state.trees.forEach(t => {
-    const o = latestObservation(t);
+  state.trees.forEach(tree => {
+    const o = latestObservation(tree);
     const cond = (o && o.condition) || 'Unassessed';
     counts[cond] = (counts[cond] || 0) + 1;
     if (o && ['Within 12 months', 'High priority', 'Immediate'].indexOf(o.priority) >= 0) needsWork++;
   });
 
   $('#summaryStats').innerHTML = [
-    ['Trees', state.trees.length],
-    ['Good', counts['Good']],
-    ['Fair', counts['Fair']],
-    ['Poor', counts['Poor'] + counts['Dead / hazard']],
-    ['Needs work', needsWork],
-    ['Photos', Photos.count()],
+    [t('Trees'), state.trees.length],
+    [t('Good'), counts['Good']],
+    [t('Fair'), counts['Fair']],
+    [t('Poor'), counts['Poor'] + counts['Dead / hazard']],
+    [t('Needs work'), needsWork],
+    [t('Photos'), Photos.count()],
   ].map(s => '<div class="stat"><div class="n">' + s[1] + '</div><div class="k">' + s[0] + '</div></div>').join('');
 
   /* Species mix, most common first. */
   const species = {};
-  state.trees.forEach(t => {
-    const key = t.species || 'Unidentified';
+  state.trees.forEach(tree => {
+    const key = tree.species || t('Unidentified');
     species[key] = (species[key] || 0) + 1;
   });
   const list = Object.keys(species).sort((a, b) => species[b] - species[a]);
 
   $('#summaryBreakdown').innerHTML = list.length
-    ? '<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:0 0 6px">Species mix</h3>'
+    ? '<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:0 0 6px">' + t('Species mix') + '</h3>'
       + list.map(s => '<div class="row" style="justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)">'
         + '<span>' + esc(s) + '</span><b>' + species[s] + '</b></div>').join('')
     : '';
@@ -4596,22 +5440,22 @@ function renderSummary() {
 function renderStorageStatus() {
   const bytes = Photos.totalBytes();
   const audioBytes = Recorder.totalBytes();
-  const parts = [Photos.count() + ' photos'
-    + (state.recordings.length
-        ? ' and ' + state.recordings.length + ' recording'
-          + (state.recordings.length === 1 ? '' : 's') : '')
-    + ', about ' + fmtBytes(bytes + audioBytes) + ' in the package.'];
+  const recs = state.recordings.length;
+  const parts = [t(recs === 0 ? '{photos} photos, about {size} in the package.'
+    : recs === 1 ? '{photos} photos and {recs} recording, about {size} in the package.'
+    : '{photos} photos and {recs} recordings, about {size} in the package.',
+    { photos: Photos.count(), recs: recs, size: fmtBytes(bytes + audioBytes) })];
 
   if (Store.mode === 'idb') {
-    parts.push('Photos persist in this browser between sessions.');
+    parts.push(t('Photos persist in this browser between sessions.'));
   } else {
     const cause = location.protocol === 'file:'
-      ? 'this page was opened directly as a file, and browsers block persistent '
-        + 'storage on file:// addresses'
-      : 'persistent storage is unavailable here (' + esc(Store.reason || 'blocked') + ')';
-    parts.push('<span class="warn">Photos are held in memory only</span> — ' + cause + '. '
+      ? t('this page was opened directly as a file, and browsers block persistent '
+        + 'storage on file:// addresses')
+      : t('persistent storage is unavailable here ({reason})', { reason: esc(Store.reason || 'blocked') });
+    parts.push(t('<span class="warn">Photos are held in memory only</span> — {cause}. '
       + '<b>Save the package before closing the tab</b> or photos will be lost. '
-      + 'Serving the app over https:// fixes this — see Offline &amp; install below.');
+      + 'Serving the app over https:// fixes this — see Offline &amp; install below.', { cause: cause }));
   }
   $('#storageStatus').innerHTML = parts.join(' ');
 }
@@ -4631,10 +5475,10 @@ function setStatus(msg, kind) {
 }
 
 function defaultStatus() {
-  if (!state.background.dataUrl) return 'Import a plot plan to begin.';
-  if (!hasScale()) return 'Tip: calibrate the plan scale to unlock canopy circles and measurements.';
-  return state.trees.length + ' trees · ' + state.visits.length + ' visit'
-       + (state.visits.length === 1 ? '' : 's');
+  if (!state.background.dataUrl) return t('Import a plot plan to begin.');
+  if (!hasScale()) return t('Tip: calibrate the plan scale to unlock canopy circles and measurements.');
+  return t(state.trees.length === 1 ? '{n} tree' : '{n} trees', { n: state.trees.length }) + ' · '
+       + t(state.visits.length === 1 ? '{n} visit' : '{n} visits', { n: state.visits.length });
 }
 
 function renderStatus() {
@@ -4644,11 +5488,11 @@ function renderStatus() {
 
   const save = $('#saveState');
   if (lastSavedAt) {
-    save.textContent = (dirty ? 'Unsaved changes · last saved ' : 'Saved ')
-      + new Date(lastSavedAt).toLocaleTimeString();
+    const when = new Date(lastSavedAt).toLocaleTimeString(uiLocale());
+    save.textContent = t(dirty ? 'Unsaved changes · last saved {time}' : 'Saved {time}', { time: when });
     save.className = dirty ? 'warn' : 'muted';
   } else {
-    save.textContent = dirty ? 'Unsaved changes' : 'Not saved yet';
+    save.textContent = t(dirty ? 'Unsaved changes' : 'Not saved yet');
     save.className = dirty ? 'warn' : 'muted';
   }
 
@@ -4679,7 +5523,7 @@ function mimeForName(name) {
 /** Split a data: URL into raw bytes plus its MIME type. */
 function dataUrlToBytes(dataUrl) {
   const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(dataUrl);
-  if (!match) throw new Error('Unreadable plan image.');
+  if (!match) throw new Error(t('Unreadable plan image.'));
   const mime = match[1] || 'application/octet-stream';
   if (match[2]) {
     const binary = atob(match[3]);
@@ -4707,7 +5551,7 @@ async function importPlan(file) {
     const dims = await new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-      img.onerror = () => reject(new Error('That file could not be read as an image.'));
+      img.onerror = () => reject(new Error(t('That file could not be read as an image.')));
       img.src = dataUrl;
     });
 
@@ -4723,16 +5567,16 @@ async function importPlan(file) {
     fitToView();
 
     if (aspectChanged && state.scale.calibration) {
-      setStatus('Plan replaced, but its proportions differ from the old one — '
-        + 're-check the scale calibration.', 'err');
+      setStatus(t('Plan replaced, but its proportions differ from the old one — '
+        + 're-check the scale calibration.'), 'err');
     } else if (dims.w < 1200) {
-      setStatus('Plan imported (' + dims.w + '×' + dims.h + '). It is fairly low resolution — '
-        + 'a 300 DPI rescan will stay sharper when you zoom in to place trees.');
+      setStatus(t('Plan imported ({w}×{h}). It is fairly low resolution — '
+        + 'a 300 DPI rescan will stay sharper when you zoom in to place trees.', { w: dims.w, h: dims.h }));
     } else {
-      setStatus('Plan imported (' + dims.w + '×' + dims.h + ').');
+      setStatus(t('Plan imported ({w}×{h}).', { w: dims.w, h: dims.h }));
     }
   } catch (err) {
-    setStatus(err.message || 'Could not import that plan.', 'err');
+    setStatus(err.message || t('Could not import that plan.'), 'err');
   }
 }
 
@@ -4740,7 +5584,7 @@ async function importPlan(file) {
 
 async function savePackage() {
   try {
-    setStatus('Building package…');
+    setStatus(t('Building package…'));
     const clone = JSON.parse(snapshot());
     const entries = [];
 
@@ -4798,43 +5642,43 @@ async function savePackage() {
     dirty = false;
     lastSavedAt = nowIso();
     renderStatus();
-    setStatus('Saved ' + filename + ' (' + fmtBytes(blob.size) + ')'
-      + (marked ? ', including ' + marked + ' marked-up photo' + (marked === 1 ? '' : 's') : '')
-      + (missing ? ' — warning: ' + missing + ' photo(s) could not be found.' : ''),
+    setStatus(t('Saved {file} ({size})', { file: filename, size: fmtBytes(blob.size) })
+      + (marked ? t(marked === 1 ? ', including {n} marked-up photo' : ', including {n} marked-up photos', { n: marked }) : '')
+      + (missing ? t(' — warning: {n} photo(s) could not be found.', { n: missing }) : ''),
       missing ? 'err' : '');
   } catch (err) {
     console.error(err);
-    setStatus('Could not build the package: ' + (err.message || err), 'err');
+    setStatus(t('Could not build the package: {detail}', { detail: err.message || err }), 'err');
   }
 }
 
 function packageReadme() {
   return [
-    'ARBORIST ASSISTANT — PROJECT PACKAGE',
+    t('ARBORIST ASSISTANT — PROJECT PACKAGE'),
     '',
-    'Property : ' + (state.project.name || '(unnamed)'),
-    'Address  : ' + (state.project.address || '—'),
-    'Exported : ' + new Date().toLocaleString(),
-    'Trees    : ' + state.trees.length,
-    'Photos   : ' + Photos.count(),
-    'Visits   : ' + state.visits.length,
+    t('Property : {v}', { v: state.project.name ? stockLabel(state.project.name) : t('(unnamed)') }),
+    t('Address  : {v}', { v: state.project.address || '—' }),
+    t('Exported : {v}', { v: new Date().toLocaleString(uiLocale()) }),
+    t('Trees    : {v}', { v: state.trees.length }),
+    t('Photos   : {v}', { v: Photos.count() }),
+    t('Visits   : {v}', { v: state.visits.length }),
     '',
-    'CONTENTS',
-    '  project.json   All tree data, observations, visits, and layout geometry.',
-    '  plan.*         The plot plan survey image used as the base layer.',
-    '  audio/         Voice recordings, named by tree and date. Feed these straight',
-    '                 into a transcription tool.',
-    '  photos/        Tree photos, one folder per tree, named by photo id.',
-    '                 A "-marked.jpg" copy sits beside any photo that has cut lines or',
-    '                 other marks drawn on it, so they are visible without the app.',
+    t('CONTENTS'),
+    t('  project.json   All tree data, observations, visits, and layout geometry.'),
+    t('  plan.*         The plot plan survey image used as the base layer.'),
+    t('  audio/         Voice recordings, named by tree and date. Feed these straight\n'
+      + '                 into a transcription tool.'),
+    t('  photos/        Tree photos, one folder per tree, named by photo id.\n'
+      + '                 A "-marked.jpg" copy sits beside any photo that has cut lines or\n'
+      + '                 other marks drawn on it, so they are visible without the app.'),
     '',
-    'This is an ordinary ZIP file. You can open it in Windows Explorer, macOS Finder,',
-    'or any unzip tool to browse the photos directly without the app.',
+    t('This is an ordinary ZIP file. You can open it in Windows Explorer, macOS Finder,\n'
+      + 'or any unzip tool to browse the photos directly without the app.'),
     '',
-    'PRIVACY: photos may carry GPS coordinates from the camera, and project.json records',
-    'them. Bear that in mind before sending this package to anyone outside the job.',
+    t('PRIVACY: photos may carry GPS coordinates from the camera, and project.json records\n'
+      + 'them. Bear that in mind before sending this package to anyone outside the job.'),
     '',
-    'To continue working, open this .zip with the Arborist Assistant HTML file.',
+    t('To continue working, open this .zip with the Arborist Assistant HTML file.'),
     '',
   ].join('\n');
 }
@@ -4843,7 +5687,7 @@ function packageReadme() {
 
 async function openProjectFile(file) {
   try {
-    setStatus('Opening ' + file.name + '…');
+    setStatus(t('Opening {name}…', { name: file.name }));
     const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
     if (isZip) await openZip(file);
     else await openJson(file);
@@ -4855,18 +5699,18 @@ async function openProjectFile(file) {
     lastSavedAt = null;
     render();
     fitToView();
-    setStatus('Opened ' + esc(state.project.name) + ' — ' + state.trees.length
-      + ' trees, ' + Photos.count() + ' photos.');
+    setStatus(t('Opened {name} — {trees} trees, {photos} photos.',
+      { name: esc(stockLabel(state.project.name)), trees: state.trees.length, photos: Photos.count() }));
   } catch (err) {
     console.error(err);
-    setStatus('Could not open that file: ' + (err.message || err), 'err');
+    setStatus(t('Could not open that file: {detail}', { detail: err.message || err }), 'err');
   }
 }
 
 async function openZip(file) {
   const files = await ZIP.read(file);
   const jsonBytes = files.get('project.json');
-  if (!jsonBytes) throw new Error('No project.json inside that ZIP.');
+  if (!jsonBytes) throw new Error(t('No project.json inside that ZIP.'));
 
   const next = migrate(JSON.parse(new TextDecoder().decode(jsonBytes)));
 
@@ -4906,8 +5750,8 @@ async function openZip(file) {
 
   state = next;
   if (restored || restoredAudio) {
-    setStatus('Restored ' + restored + ' photos'
-      + (restoredAudio ? ' and ' + restoredAudio + ' recordings' : '') + '.');
+    setStatus(t(restoredAudio ? 'Restored {n} photos and {a} recordings.' : 'Restored {n} photos.',
+      { n: restored, a: restoredAudio }));
   }
 }
 
@@ -4923,8 +5767,8 @@ async function openJson(file) {
   next.recordings = [];
   state = next;
   if (dropped) {
-    setStatus('Opened, but ' + dropped + ' photo reference(s) were dropped — '
-      + 'JSON files do not carry photo data. Use a .zip package to keep photos.', 'err');
+    setStatus(t('Opened, but {n} photo reference(s) were dropped — '
+      + 'JSON files do not carry photo data. Use a .zip package to keep photos.', { n: dropped }), 'err');
   }
 }
 
@@ -4940,33 +5784,33 @@ function exportCsv() {
     'Stems', 'Stem diameters (in)', 'Ordinance', 'CRZ radius (ft)', 'CRZ impacted (%)',
     'Height (ft)', 'Spread (ft)', 'Condition', 'Priority', 'Defects', 'Recommended work',
     'Last assessed', 'Photos', 'Marked photos', 'Latitude', 'Longitude', 'GPS spread (m)',
-    'Notes', 'X', 'Y'];
+    'Notes', 'X', 'Y'].map(h => t(h));
 
   const rows = state.trees.slice()
     .sort((a, b) => String(a.treeId).localeCompare(String(b.treeId), undefined, { numeric: true }))
-    .map(t => {
-      const o = latestObservation(t) || {};
-      const loc = treeLocation(t);
-      const status = classifyTree(t);
-      const crz = crzRadiusFt(t);
-      const impact = crzImpact(t);
+    .map(tree => {
+      const o = latestObservation(tree) || {};
+      const loc = treeLocation(tree);
+      const status = classifyTree(tree);
+      const crz = crzRadiusFt(tree);
+      const impact = crzImpact(tree);
       const stems = (o.trunks || []).filter(n => Number.isFinite(n));
       return [
-        t.treeId, t.species, t.botanical, t.status, t.protected ? 'Yes' : 'No',
+        tree.treeId, tree.species, tree.botanical, t(tree.status), t(tree.protected ? 'Yes' : 'No'),
         fmtIn(o.dbhIn),
         stems.length > 1 ? stems.length : '',
         stems.length > 1 ? stems.map(fmtIn).join(' + ') : '',
-        status ? ORDINANCE_LABELS[status.level] : '',
+        status ? t(ORDINANCE_LABELS[status.level]) : '',
         crz == null ? '' : Math.round(crz * 10) / 10,
         impact ? Math.round(impact.fraction * 100) : '',
-        o.heightFt, o.spreadFt, o.condition, o.priority,
-        (o.defects || []).join('; '), (o.recommendations || []).join('; '),
-        o.date || '', t.photos.length,
-        t.photos.reduce((n, p) => n + (Annot.count(p) ? 1 : 0), 0),
+        o.heightFt, o.spreadFt, o.condition && t(o.condition), o.priority && t(o.priority),
+        tList(o.defects, '; '), tList(o.recommendations, '; '),
+        o.date || '', tree.photos.length,
+        tree.photos.reduce((n, p) => n + (Annot.count(p) ? 1 : 0), 0),
         loc ? loc.lat.toFixed(6) : '', loc ? loc.lon.toFixed(6) : '',
         loc && loc.samples > 1 ? loc.spreadM : '',
-        t.history.map(h => h.text).join(' | '),
-        t.x.toFixed(5), t.y.toFixed(5),
+        tree.history.map(h => h.text).join(' | '),
+        tree.x.toFixed(5), tree.y.toFixed(5),
       ].map(csvCell).join(',');
     });
 
@@ -4974,7 +5818,7 @@ function exportCsv() {
   const csv = '﻿' + [headers.map(csvCell).join(',')].concat(rows).join('\r\n');
   downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }),
     slug(state.project.name) + '-trees-' + todayIso() + '.csv');
-  setStatus('Exported ' + rows.length + ' trees to CSV.');
+  setStatus(t('Exported {n} trees to CSV.', { n: rows.length }));
 }
 
 /* -------- Print report ------------------------------------------------------ */
@@ -4983,57 +5827,58 @@ function buildPrintReport() {
   const p = state.project;
   const rules = activeOrdinance();
   const meta = [
-    ['Property', p.name], ['Address', p.address], ['Client', p.client],
-    ['Arborist', p.arborist], ['Report date', fmtDate(todayIso())],
-    ['Trees inventoried', state.trees.length],
+    [t('Property'), stockLabel(p.name)], [t('Address'), p.address], [t('Client'), p.client],
+    [t('Arborist'), p.arborist], [t('Report date'), fmtDate(todayIso())],
+    [t('Trees inventoried'), state.trees.length],
     rules && rules.id !== 'none'
-      ? ['Ordinance', rules.label + ' — ' + (p.propertyType === 'commercial'
+      ? [t('Ordinance'), t(rules.label) + ' — ' + t(p.propertyType === 'commercial'
           ? 'commercial / multifamily' : 'residential')]
       : null,
   ].filter(r => r && r[1] !== '' && r[1] != null);
 
   const rows = state.trees.slice()
     .sort((a, b) => String(a.treeId).localeCompare(String(b.treeId), undefined, { numeric: true }))
-    .map(t => {
-      const o = latestObservation(t) || {};
-      const status = classifyTree(t);
-      const crz = crzRadiusFt(t);
+    .map(tree => {
+      const o = latestObservation(tree) || {};
+      const status = classifyTree(tree);
+      const crz = crzRadiusFt(tree);
       const stems = (o.trunks || []).filter(n => Number.isFinite(n));
       return '<tr>'
-        + '<td>' + esc(t.treeId) + '</td>'
-        + '<td>' + esc(t.species || '—')
-          + (t.botanical ? '<br><i>' + esc(t.botanical) + '</i>' : '') + '</td>'
+        + '<td>' + esc(tree.treeId) + '</td>'
+        + '<td>' + esc(tree.species || '—')
+          + (tree.botanical ? '<br><i>' + esc(tree.botanical) + '</i>' : '') + '</td>'
         + '<td>' + (o.dbhIn != null ? esc(fmtIn(o.dbhIn)) : '—')
           + (stems.length > 1 ? '<br><span style="font-size:9px">' + esc(stems.map(fmtIn).join(' + '))
-             + ' (' + stems.length + ' stems)</span>' : '') + '</td>'
-        + '<td>' + (status ? esc(ORDINANCE_LABELS[status.level]) : '—') + '</td>'
+             + ' (' + esc(t('{n} stems', { n: stems.length })) + ')</span>' : '') + '</td>'
+        + '<td>' + (status ? esc(t(ORDINANCE_LABELS[status.level])) : '—') + '</td>'
         + '<td>' + (crz == null ? '—' : esc(Math.round(crz * 10) / 10)) + '</td>'
         + '<td>' + (o.heightFt != null ? esc(o.heightFt) : '—') + '</td>'
         + '<td>' + (o.spreadFt != null ? esc(o.spreadFt) : '—') + '</td>'
-        + '<td>' + esc(o.condition || 'Unassessed') + '</td>'
-        + '<td>' + esc(o.priority || 'Not set') + '</td>'
-        + '<td>' + esc((o.recommendations || []).join(', ') || '—') + '</td>'
-        + '<td>' + esc((o.defects || []).join(', ') || '—') + '</td>'
+        + '<td>' + esc(t(o.condition || 'Unassessed')) + '</td>'
+        + '<td>' + esc(t(o.priority || 'Not set')) + '</td>'
+        + '<td>' + esc(tList(o.recommendations) || '—') + '</td>'
+        + '<td>' + esc(tList(o.defects) || '—') + '</td>'
         + '</tr>';
     }).join('');
 
   $('#print-report').innerHTML =
-      '<h2>' + esc(p.name || 'Tree Inventory') + '</h2>'
+      '<h2>' + esc(p.name ? stockLabel(p.name) : t('Tree Inventory')) + '</h2>'
     + '<table style="margin-bottom:14px;width:auto">'
     + meta.map(r => '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>').join('')
     + '</table>'
-    + '<h2>Tree schedule</h2>'
+    + '<h2>' + t('Tree schedule') + '</h2>'
     + '<table><thead><tr>'
     + ['ID', 'Species', 'Dia. (in)', 'Ordinance', 'CRZ (ft)', 'Ht (ft)', 'Spread (ft)',
        'Condition', 'Priority', 'Recommended work', 'Defects']
-      .map(h => '<th>' + h + '</th>').join('')
-    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="11">No trees recorded.</td></tr>')
+      .map(h => '<th>' + t(h) + '</th>').join('')
+    + '</tr></thead><tbody>' + (rows || '<tr><td colspan="11">' + t('No trees recorded.') + '</td></tr>')
     + '</tbody></table>'
     + (rules && rules.id !== 'none'
-        ? '<p style="font-size:10px;margin-top:10px"><b>' + esc(rules.label) + ':</b> '
-          + 'diameter measured at ' + rules.measureHeightFt + ' ft above grade; multi-trunk '
-          + 'totalled as largest stem + ½ of each additional stem. Critical root zone radius '
-          + '= 1 ft per inch of diameter. ' + esc(rules.note) + '</p>'
+        ? '<p style="font-size:10px;margin-top:10px"><b>' + esc(t(rules.label)) + ':</b> '
+          + t('diameter measured at {h} ft above grade; multi-trunk totalled as largest stem + ½ of '
+            + 'each additional stem. Critical root zone radius = 1 ft per inch of diameter.',
+            { h: rules.measureHeightFt })
+          + ' ' + esc(t(rules.note)) + '</p>'
         : '');
 }
 
@@ -5111,18 +5956,18 @@ async function refreshPersistence() {
 async function requestPersistence() {
   try {
     if (!navigator.storage || !navigator.storage.persist) {
-      setStatus('This browser does not support permanent storage requests.', 'err');
+      setStatus(t('This browser does not support permanent storage requests.'), 'err');
       return;
     }
     const granted = await navigator.storage.persist();
     storagePersisted = granted;
     setStatus(granted
-      ? 'Storage is now permanent — the browser will not evict your data to reclaim space.'
-      : 'The browser declined. Installing the app to your home screen usually makes it grant this.',
+      ? t('Storage is now permanent — the browser will not evict your data to reclaim space.')
+      : t('The browser declined. Installing the app to your home screen usually makes it grant this.'),
       granted ? '' : 'err');
     renderSidebar();
   } catch (err) {
-    setStatus('Could not request permanent storage: ' + (err.message || err), 'err');
+    setStatus(t('Could not request permanent storage: {detail}', { detail: err.message || err }), 'err');
   }
 }
 
@@ -5134,28 +5979,28 @@ function renderPwaStatus() {
   const offlineReady = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 
   if (location.protocol === 'file:') {
-    lines.push('<span class="warn">Running as a local file.</span> Offline caching and '
+    lines.push(t('<span class="warn">Running as a local file.</span> Offline caching and '
       + 'persistent storage both need the app served over https:// (or localhost). '
-      + 'Everything else works normally.');
+      + 'Everything else works normally.'));
   } else if (!window.isSecureContext) {
-    lines.push('<span class="warn">This address is not a secure context</span>, so offline '
+    lines.push(t('<span class="warn">This address is not a secure context</span>, so offline '
       + 'caching is unavailable. A LAN address such as http://192.168.x.x does not count — '
-      + 'use https:// or localhost.');
+      + 'use https:// or localhost.'));
   } else if (offlineReady) {
-    lines.push('<b>Offline ready.</b> The app is cached and will open with no connection.');
+    lines.push(t('<b>Offline ready.</b> The app is cached and will open with no connection.'));
   } else if (swRegistration) {
-    lines.push('Caching the app for offline use — reload once to finish.');
+    lines.push(t('Caching the app for offline use — reload once to finish.'));
   } else {
-    lines.push('Offline caching unavailable in this browser.');
+    lines.push(t('Offline caching unavailable in this browser.'));
   }
 
-  if (isStandalone()) lines.push('Running as an installed app.');
+  if (isStandalone()) lines.push(t('Running as an installed app.'));
 
   if (storagePersisted === true) {
-    lines.push('Storage is <b>permanent</b> and will not be evicted.');
+    lines.push(t('Storage is <b>permanent</b> and will not be evicted.'));
   } else if (storagePersisted === false) {
-    lines.push('<span class="warn">Storage is best-effort</span> — the browser may evict it '
-      + 'to reclaim space. Installing to your home screen makes permanence much more likely.');
+    lines.push(t('<span class="warn">Storage is best-effort</span> — the browser may evict it '
+      + 'to reclaim space. Installing to your home screen makes permanence much more likely.'));
   }
 
   host.innerHTML = lines.join(' ');
@@ -5173,13 +6018,47 @@ function renderPwaStatus() {
 
 function populateSelects() {
   $('#fCondition').innerHTML = CONDITIONS.map(c =>
-    '<option value="' + esc(c.value) + '">' + esc(c.value) + '</option>').join('');
+    '<option value="' + esc(c.value) + '">' + esc(t(c.value)) + '</option>').join('');
   $('#fPriority').innerHTML = PRIORITIES.map(p =>
-    '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
-  $('#speciesList').innerHTML = SPECIES.map(s =>
-    '<option value="' + esc(s[0]) + '">' + esc(s[1]) + '</option>').join('');
+    '<option value="' + esc(p) + '">' + esc(t(p)) + '</option>').join('');
+  /* The value stays the English name, so choosing a tree records the same thing in any
+     language. The label carries the Spanish name, and browsers match typing against
+     it too — typing "encino" finds the oaks. */
+  $('#speciesList').innerHTML = SPECIES.map(s => {
+    const local = lang === 'es' && SPECIES_ES[s[0]];
+    return '<option value="' + esc(s[0]) + '">' + esc(local ? local + ' · ' + s[1] : s[1]) + '</option>';
+  }).join('');
   $('#pOrdinance').innerHTML = Object.keys(ORDINANCES).map(k =>
-    '<option value="' + esc(k) + '">' + esc(ORDINANCES[k].label) + '</option>').join('');
+    '<option value="' + esc(k) + '">' + esc(t(ORDINANCES[k].label)) + '</option>').join('');
+}
+
+/** Repaint everything in the current language. Touches no project data, so switching
+    language neither marks the project unsaved nor adds an undo step. */
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  paintStaticText();
+  $$('#langGroup [data-lang]').forEach(btn => {
+    btn.setAttribute('aria-pressed', String(btn.getAttribute('data-lang') === lang));
+  });
+  populateSelects();
+  showHint(toolHint(tool));
+  renderRecordingBar();
+  /* An error stays on screen in the language it was raised in; it is not reproducible
+     from here, and clearing it would hide something the user still needs to read. */
+  const msg = $('#statusMsg');
+  if (msg.className !== 'err') msg.textContent = defaultStatus();
+  render();
+}
+
+function buildLanguageToggle() {
+  const group = $('#langGroup');
+  group.innerHTML = Object.keys(LANGUAGES).map(code =>
+    '<button type="button" data-lang="' + esc(code) + '" lang="' + esc(code) + '" aria-pressed="false">'
+    + esc(LANGUAGES[code].label) + '</button>').join('');
+  group.addEventListener('click', e => {
+    const btn = e.target.closest('[data-lang]');
+    if (btn) setLanguage(btn.getAttribute('data-lang'));
+  });
 }
 
 /** Mutate the active visit's observation for the selected tree, creating it on demand. */
@@ -5255,27 +6134,29 @@ function wireEvents() {
   $('#fTreeId').onchange = e => {
     const tree = selectedTree(); if (!tree) return;
     const value = e.target.value.trim();
-    if (!value) { setStatus('Tree ID cannot be blank.', 'err'); renderSidebar(); return; }
-    if (state.trees.some(t => t !== tree && t.treeId === value)) {
-      setStatus('Tree ID "' + value + '" is already used.', 'err');
+    if (!value) { setStatus(t('Tree ID cannot be blank.'), 'err'); renderSidebar(); return; }
+    if (state.trees.some(other => other !== tree && other.treeId === value)) {
+      setStatus(t('Tree ID "{id}" is already used.', { id: value }), 'err');
       renderSidebar();
       return;
     }
-    editTree(t => { t.treeId = value; });
+    editTree(tr => { tr.treeId = value; });
   };
   $('#fSpecies').onchange = e => {
     const value = e.target.value;
-    editTree(t => {
-      t.species = value;
+    editTree(tr => {
+      tr.species = value;
       /* Fill the botanical name from the suggestion list, but never overwrite one
-         the user typed themselves. */
-      const match = SPECIES.find(s => s[0].toLowerCase() === value.toLowerCase());
-      if (match && !t.botanical) t.botanical = match[1];
+         the user typed themselves. A Spanish name typed out in full counts as a match,
+         which matters because the botanical name is what drives classification. */
+      const typed = fold(value);
+      const match = SPECIES.find(s => fold(s[0]) === typed || fold(SPECIES_ES[s[0]]) === typed);
+      if (match && !tr.botanical) tr.botanical = match[1];
     });
   };
-  $('#fBotanical').onchange = e => { const v = e.target.value; editTree(t => { t.botanical = v; }); };
-  $('#fStatus').onchange    = e => { const v = e.target.value; editTree(t => { t.status = v; }); };
-  $('#fProtected').onchange = e => { const v = e.target.checked; editTree(t => { t.protected = v; }); };
+  $('#fBotanical').onchange = e => { const v = e.target.value; editTree(tr => { tr.botanical = v; }); };
+  $('#fStatus').onchange    = e => { const v = e.target.value; editTree(tr => { tr.status = v; }); };
+  $('#fProtected').onchange = e => { const v = e.target.checked; editTree(tr => { tr.protected = v; }); };
 
   /* --- observation fields --- */
   /** The entry mode of the observation currently being edited. */
@@ -5396,13 +6277,14 @@ function wireEvents() {
     const files = Array.from(e.target.files);
     e.target.value = '';
     if (!tree || !files.length) return;
-    setStatus('Processing ' + files.length + ' photo(s)…');
+    setStatus(t('Processing {n} photo(s)…', { n: files.length }));
     const before = snapshot();
     const added = await Photos.add(tree, files);
     if (added) {
       commit(before);
-      setStatus('Added ' + added + ' photo(s)'
-        + (Store.mode === 'memory' ? ' — remember to save the package before closing.' : '.'));
+      setStatus(t(Store.mode === 'memory'
+        ? 'Added {n} photo(s) — remember to save the package before closing.'
+        : 'Added {n} photo(s).', { n: added }));
     }
   };
   $('#filePhotoCamera').onchange  = onPhotos;
@@ -5413,7 +6295,7 @@ function wireEvents() {
     const removeBtn = e.target.closest('[data-remove]');
     if (removeBtn) {
       e.stopPropagation();
-      if (!confirm('Remove this photo from tree ' + tree.treeId + '?')) return;
+      if (!confirm(t('Remove this photo from tree {id}?', { id: tree.treeId }))) return;
       const before = snapshot();
       Photos.remove(tree, removeBtn.getAttribute('data-remove'));
       commit(before);
@@ -5521,7 +6403,7 @@ function wireEvents() {
   $('#annotClear').onclick = () => {
     const photo = currentAnnotPhoto();
     if (!photo || !(photo.annotations || []).length) return;
-    if (!confirm('Remove all ' + photo.annotations.length + ' marks from this photo?')) return;
+    if (!confirm(t('Remove all {n} marks from this photo?', { n: photo.annotations.length }))) return;
     const before = snapshot();
     photo.annotations = [];
     commit(before);
@@ -5535,10 +6417,10 @@ function wireEvents() {
     const text = loc.lat.toFixed(6) + ', ' + loc.lon.toFixed(6);
     try {
       await navigator.clipboard.writeText(text);
-      setStatus('Copied ' + text);
+      setStatus(t('Copied {text}', { text: text }));
     } catch (err) {
       /* Clipboard needs a secure context; show the value so it can be copied by hand. */
-      setStatus('Coordinates: ' + text);
+      setStatus(t('Coordinates: {text}', { text: text }));
     }
   };
 
@@ -5563,18 +6445,18 @@ function wireEvents() {
     state.visits.push(v);
     state.activeVisitId = v.id;
     commit(before);
-    setStatus('New visit started for ' + fmtDate(v.date)
-      + '. Measurements you record now are filed under it.');
+    setStatus(t('New visit started for {date}. Measurements you record now are filed under it.',
+      { date: fmtDate(v.date) }));
   };
   $('#btnDeleteVisit').onclick = () => {
     if (state.visits.length <= 1) return;
     const v = activeVisit();
-    const count = state.trees.reduce((n, t) => n + t.observations.filter(o => o.visitId === v.id).length, 0);
-    if (!confirm('Delete the visit of ' + fmtDate(v.date) + '?'
-      + (count ? '\n\nThis also deletes ' + count + ' observation(s) recorded during it.' : ''))) return;
+    const count = state.trees.reduce((n, tr) => n + tr.observations.filter(o => o.visitId === v.id).length, 0);
+    if (!confirm(t('Delete the visit of {date}?', { date: fmtDate(v.date) })
+      + (count ? '\n\n' + t('This also deletes {n} observation(s) recorded during it.', { n: count }) : ''))) return;
     const before = snapshot();
     state.visits = state.visits.filter(x => x.id !== v.id);
-    state.trees.forEach(t => { t.observations = t.observations.filter(o => o.visitId !== v.id); });
+    state.trees.forEach(tr => { tr.observations = tr.observations.filter(o => o.visitId !== v.id); });
     state.activeVisitId = state.visits[state.visits.length - 1].id;
     commit(before);
   };
@@ -5646,7 +6528,7 @@ function wireEvents() {
     const before = snapshot();
     state.scale.calibration = null;
     commit(before);
-    setStatus('Scale cleared.');
+    setStatus(t('Scale cleared.'));
   };
   $('#scaleOk').onclick = () => {
     const raw = numOrNull($('#scaleFeet').value);
@@ -5659,7 +6541,7 @@ function wireEvents() {
     pendingCalibration = null;
     clearOverlay();
     commit(before);
-    setStatus('Scale set. Canopy circles and measurements are now live.');
+    setStatus(t('Scale set. Canopy circles and measurements are now live.'));
   };
   $('#scaleDialog').addEventListener('close', () => {
     pendingCalibration = null;
@@ -5682,7 +6564,7 @@ function wireEvents() {
     const id = remove.getAttribute('data-rec-remove');
     const rec = state.recordings.find(r => r.id === id);
     if (!rec) return;
-    if (!confirm('Delete this ' + fmtDuration(rec.durationSec) + ' recording?')) return;
+    if (!confirm(t('Delete this {time} recording?', { time: fmtDuration(rec.durationSec) }))) return;
     const before = snapshot();
     await Recorder.remove(id);
     commit(before);
@@ -5720,7 +6602,7 @@ function wireEvents() {
       if (storagePersisted === false) requestPersistence();
       renderSidebar();
     });
-    setStatus('Installed. Launch it from your home screen to work offline.');
+    setStatus(t('Installed. Launch it from your home screen to work offline.'));
   });
 
   $('#btnInstall').onclick = async () => {
@@ -5730,12 +6612,12 @@ function wireEvents() {
     deferredInstallPrompt = null;
     renderSidebar();
     if (choice && choice.outcome !== 'accepted') {
-      setStatus('Install dismissed. You can still use the app in this tab.');
+      setStatus(t('Install dismissed. You can still use the app in this tab.'));
     }
   };
   $('#btnPersist').onclick = requestPersistence;
   $('#btnUpdateApp').onclick = () => {
-    if (dirty && !confirm('You have unsaved changes. Reload to update anyway?')) return;
+    if (dirty && !confirm(t('You have unsaved changes. Reload to update anyway?'))) return;
     if (swRegistration && swRegistration.waiting) swRegistration.waiting.postMessage('skipWaiting');
     location.reload();
   };
@@ -5789,16 +6671,20 @@ async function offerRecovery() {
     if (!hasContent) return;
     if (state.trees.length || state.structures.length) return;
 
-    const when = new Date(rec.savedAt).toLocaleString();
-    if (confirm('An unsaved session from ' + when + ' was found ('
-      + rec.state.trees.length + ' trees).\n\nRestore it?')) {
+    const when = new Date(rec.savedAt).toLocaleString(uiLocale());
+    if (confirm(t('An unsaved session from {when} was found ({n} trees).\n\nRestore it?',
+      { when: when, n: rec.state.trees.length }))) {
       state = migrate(rec.state);
-      setStatus('Recovered your last session. Save a package to make it permanent.');
+      setStatus(t('Recovered your last session. Save a package to make it permanent.'));
     }
   } catch (e) { /* recovery is best-effort */ }
 }
 
 async function init() {
+  captureStaticText();
+  buildLanguageToggle();
+  document.documentElement.lang = lang;
+  paintStaticText();
   populateSelects();
   wireEvents();
 
@@ -5813,7 +6699,7 @@ async function init() {
 
   setTool('select');
   showTab('Selected');
-  render();
+  applyLanguage();
   requestAnimationFrame(fitToView);
 
   if (mode === 'memory') {
